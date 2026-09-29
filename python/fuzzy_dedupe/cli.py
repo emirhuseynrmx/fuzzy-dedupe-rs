@@ -28,7 +28,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     args = p.parse_args(argv)
 
-    with open(args.csv, newline="", encoding="utf-8-sig") as f:
+    # Reading the file the user names is this tool's whole job.
+    with open(args.csv, newline="", encoding="utf-8-sig") as f:  # NOSONAR
         rows = list(csv.DictReader(f))
     if rows and args.column not in rows[0]:
         p.error(f"column {args.column!r} not found; columns are {list(rows[0])}")
@@ -37,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     start = time.perf_counter()
     if not args.output and hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")  # names are UTF-8; don't let a Windows console mangle them
-    out = open(args.output, "w", newline="", encoding="utf-8") if args.output else sys.stdout
+    out = open(args.output, "w", newline="", encoding="utf-8") if args.output else sys.stdout  # NOSONAR: user-chosen output path
     try:
         w = csv.writer(out)
         if args.groups:

@@ -49,7 +49,7 @@ jobs:
         shell: bash
         run: |
           maturin build --release --out dist
-          python -m pip install --no-index --only-binary :all: --find-links dist fuzzy-dedupe
+          python -m pip install --no-index --no-deps --only-binary :all: dist/fuzzy_dedupe-*.whl
       - name: Rust and Python give the same answers
         run: python -m pytest -q
       - name: Benchmark (small, just to show it runs)

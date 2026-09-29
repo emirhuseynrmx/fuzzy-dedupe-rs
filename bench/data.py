@@ -58,11 +58,12 @@ def messy(name: str, rng: random.Random) -> str:
 
 
 def names(n: int, seed: int = 7) -> list[str]:
+    # Seeded on purpose: benchmark data must be the same on every run. Not used for anything secret.
     rng = random.Random(seed)
     out: list[str] = []
     for _ in range(n):
-        if out and rng.random() < 0.35:
-            out.append(messy(rng.choice(out), rng))
+        if out and rng.random() < 0.35:  # NOSONAR: reproducible test data
+            out.append(messy(rng.choice(out), rng))  # NOSONAR: reproducible test data
         else:
             out.append(company(rng))
     return out
