@@ -261,10 +261,12 @@ impl BlockPattern {
         let mut dist = max;
         let diagonal: u64 = 1 << 63;
         let mut horizontal: u64 = 1 << 62;
-        let mut start = max as isize + 1 - 64;
+        let first = max as isize + 1 - 64;
         // The score can fall along the last row but never along the diagonal.
         let break_score = max + n - (m - max);
         for (i, &c) in text.iter().enumerate() {
+            // The window's top row, one lower per text character.
+            let start = first + i as isize;
             let pm = if start < 0 {
                 self.word(0, c) << (-start) as u32
             } else {
@@ -290,7 +292,6 @@ impl BlockPattern {
             }
             vp = hn | !((d0 >> 1) | hp);
             vn = (d0 >> 1) & hp;
-            start += 1;
         }
         if dist <= max {
             dist
