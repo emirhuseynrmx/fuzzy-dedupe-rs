@@ -1,17 +1,27 @@
 [package]
 name = "fuzzy-dedupe"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
+rust-version = "1.80"
 license = "MIT"
+description = "Near-duplicate name search with exact results: PASS-JOIN filtering and bit-parallel edit distance"
+repository = "https://github.com/emirhuseynrmx/fuzzy-dedupe-rs"
 publish = false
 
 [lib]
 name = "_native"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+python = ["dep:pyo3"]
 
 [dependencies]
-pyo3 = { version = "0.23", features = ["extension-module", "abi3-py39"] }
+pyo3 = { version = "0.23", features = ["extension-module", "abi3-py39"], optional = true }
 rayon = "1.10"
+
+[dev-dependencies]
+proptest = "1.5"
 
 [profile.release]
 lto = true

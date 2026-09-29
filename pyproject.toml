@@ -4,21 +4,36 @@ build-backend = "maturin"
 
 [project]
 name = "fuzzy-dedupe"
-version = "0.1.0"
-description = "Find near-duplicate names in a list. Same API in pure Python and in Rust (PyO3)."
+version = "0.2.0"
+description = "Find near-duplicate names fast, with exactly the answers of a brute-force search. Rust core (PASS-JOIN + bit-parallel edit distance), Python API and CLI."
 readme = "README.md"
 license = { text = "MIT" }
+authors = [{ name = "Emir Hüseyin İnci" }]
 requires-python = ">=3.9"
+keywords = ["deduplication", "fuzzy-matching", "entity-resolution", "levenshtein", "record-linkage", "rust"]
 classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
     "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Text Processing",
+    "Typing :: Typed",
 ]
 
+[project.urls]
+Repository = "https://github.com/emirhuseynrmx/fuzzy-dedupe-rs"
+
+[project.scripts]
+fuzzy-dedupe = "fuzzy_dedupe.cli:main"
+
 [project.optional-dependencies]
-dev = ["pytest>=8"]
-examples = ["proofframe>=0.7", "pyarrow>=14", "pandas>=2"]
+dev = ["pytest>=8", "hypothesis>=6"]
+examples = ["proofframe>=0.7; python_version >= '3.10'", "pyarrow>=14", "pandas>=2"]
 
 [tool.maturin]
 python-source = "python"
 module-name = "fuzzy_dedupe._native"
-features = ["pyo3/extension-module"]
+features = ["python"]

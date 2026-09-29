@@ -1,48 +1,63 @@
-"""Time both versions on the same list and check they agree.
+"""Time every strategy on the same names and check they agree.
 
-    python bench/bench.py            # 3,000 names
-    python bench/bench.py 5000       # any size
+    python bench/bench.py                    # 3,000 names, includes pure Python
+    python bench/bench.py 20000 100000       # bigger lists, Rust only
+    python bench/bench.py --threads 1 3000   # pin rayon to one thread (set before import)
 
 Prints a Markdown table. The numbers in the README come from this script.
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import platform
 import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
+parser = argparse.ArgumentParser()
+parser.add_argument("sizes", nargs="*", type=int, default=[3000])
+parser.add_argument("--threshold", type=float, default=0.2)
+parser.add_argument("--threads", type=int, default=None)
+parser.add_argument("--python-limit", type=int, default=5000, help="skip pure Python above this size")
+args = parser.parse_args()
+if args.threads:
+    os.environ["RAYON_NUM_THREADS"] = str(args.threads)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from data import names as make_names  # noqa: E402
 
 from fuzzy_dedupe import find_duplicates, find_duplicates_python  # noqa: E402
-from test_same_answers import messy_list  # noqa: E402
 
 
-def timed(fn, *args):
+def timed(fn, *a, **kw):
     start = time.perf_counter()
-    result = fn(*args)
-    return result, time.perf_counter() - start
+    out = fn(*a, **kw)
+    return out, time.perf_counter() - start
+
+
+def fmt(t: float) -> str:
+    return f"{t:.2f} s" if t >= 1 else f"{t * 1000:.0f} ms"
 
 
 def main() -> None:
-    n = int(sys.argv[1]) if len(sys.argv) > 1 else 3000
-    names = messy_list(n, seed=7)
-    threshold = 0.2
-
-    rust, t_rust = timed(find_duplicates, names, threshold)
-    python, t_python = timed(find_duplicates_python, names, threshold)
-    assert rust == python, "the two versions disagree"
-
-    pairs = n * (n - 1) // 2
-    print(f"{n:,} names, {pairs:,} pairs compared, {len(rust):,} duplicates found, threshold {threshold}")
-    print(f"Machine: {platform.processor() or platform.machine()}, {os.cpu_count()} logical cores, "
-          f"Python {platform.python_version()}, {platform.system()}\n")
-    print("| Version | Time | Speed-up |")
-    print("|---|---|---|")
-    print(f"| Pure Python | {t_python:.2f} s | 1x |")
-    print(f"| Rust (PyO3 + rayon) | {t_rust:.3f} s | {t_python / t_rust:.0f}x |")
+    cores = args.threads or os.cpu_count()
+    print(f"Machine: {platform.processor() or platform.machine()}, {cores} thread(s), "
+          f"Python {platform.python_version()}, {platform.system()}. Threshold {args.threshold}.\n")
+    print("| Names | Pairs found | Pure Python | Rust, all pairs | Rust, PASS-JOIN index | Index vs all pairs |")
+    print("|---:|---:|---:|---:|---:|---:|")
+    for n in args.sizes:
+        ns = make_names(n)
+        indexed, t_idx = timed(find_duplicates, ns, args.threshold, method="indexed")
+        brute, t_brute = timed(find_duplicates, ns, args.threshold, method="brute")
+        assert indexed == brute, "index and brute force disagree"
+        py = "skipped"
+        if n <= args.python_limit:
+            ref, t_py = timed(find_duplicates_python, ns, args.threshold)
+            assert ref == brute, "Rust and Python disagree"
+            py = fmt(t_py)
+        print(f"| {n:,} | {len(brute):,} | {py} | {fmt(t_brute)} | {fmt(t_idx)} | {t_brute / t_idx:.1f}x |")
 
 
 if __name__ == "__main__":

@@ -1,16 +1,20 @@
-3,000 names, 4,498,500 pairs compared, 87,525 duplicates found, threshold 0.2
-Machine: AMD64 Family 25 Model 33 Stepping 2, AuthenticAMD, 12 logical cores, Python 3.13.15, Windows
+## All threads
 
-| Version | Time | Speed-up |
-|---|---|---|
-| Pure Python | 36.21 s | 1x |
-| Rust (PyO3 + rayon) | 0.065 s | 560x |
+Machine: AMD64 Family 25 Model 33 Stepping 2, AuthenticAMD, 12 thread(s), Python 3.13.15, Windows. Threshold 0.2.
 
-Same run with `RAYON_NUM_THREADS=1` (Rust on one core):
+| Names | Pairs found | Pure Python | Rust, all pairs | Rust, PASS-JOIN index | Index vs all pairs |
+|---:|---:|---:|---:|---:|---:|
+| 3,000 | 1,787 | 156.93 s | 55 ms | 18 ms | 3.1x |
+| 20,000 | 24,547 | skipped | 2.14 s | 243 ms | 8.8x |
+| 100,000 | 422,674 | skipped | 48.08 s | 5.75 s | 8.4x |
 
-| Version | Time | Speed-up |
-|---|---|---|
-| Pure Python | 35.92 s | 1x |
-| Rust (PyO3, 1 thread) | 0.317 s | 113x |
+## One thread (RAYON_NUM_THREADS=1)
 
-Measured 2026-09-29 with `python bench/bench.py 3000`.
+Machine: AMD64 Family 25 Model 33 Stepping 2, AuthenticAMD, 1 thread(s), Python 3.13.15, Windows. Threshold 0.2.
+
+| Names | Pairs found | Pure Python | Rust, all pairs | Rust, PASS-JOIN index | Index vs all pairs |
+|---:|---:|---:|---:|---:|---:|
+| 3,000 | 1,787 | skipped | 312 ms | 41 ms | 7.6x |
+| 20,000 | 24,547 | skipped | 14.11 s | 1.36 s | 10.4x |
+
+Measured 2026-09-29 with `python bench/bench.py 3000 20000 100000` and `python bench/bench.py --threads 1 3000 20000 --python-limit 0`.
