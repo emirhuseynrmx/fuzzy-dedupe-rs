@@ -1,9 +1,9 @@
 [package]
 name = "fuzzy-dedupe"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.80"
-license = "MIT"
+license = "Apache-2.0"
 description = "Near-duplicate name search with exact results: PASS-JOIN filtering and bit-parallel edit distance"
 repository = "https://github.com/emirhuseynrmx/fuzzy-dedupe-rs"
 publish = false

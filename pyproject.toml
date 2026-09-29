@@ -4,10 +4,10 @@ build-backend = "maturin"
 
 [project]
 name = "fuzzy-dedupe"
-version = "0.2.0"
+version = "0.3.0"
 description = "Find near-duplicate names fast, with exactly the answers of a brute-force search. Rust core (PASS-JOIN + bit-parallel edit distance), Python API and CLI."
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 authors = [{ name = "Emir Hüseyin İnci" }]
 requires-python = ">=3.9"
 keywords = ["deduplication", "fuzzy-matching", "entity-resolution", "levenshtein", "record-linkage", "rust"]
@@ -15,7 +15,7 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Rust",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: Implementation :: CPython",

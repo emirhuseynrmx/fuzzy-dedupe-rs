@@ -68,3 +68,24 @@ def test_cli_pairs_and_groups(tmp_path, capsys):
     rows = list(csv.DictReader(groups.open(encoding="utf-8")))
     assert {r["row"] for r in rows} == {"1", "2", "4"} and {r["group"] for r in rows} == {"1"}
     assert "3 pairs" in capsys.readouterr().err
+
+
+@settings(max_examples=300, deadline=None)
+@given(names, names, thresholds, st.booleans())
+def test_link_matches_python(left, right, t, token_sort):
+    from fuzzy_dedupe import link, link_python
+
+    expected = link_python(left, right, t, token_sort=token_sort)
+    for method in ("auto", "indexed", "brute"):
+        assert link(left, right, t, token_sort=token_sort, method=method) == expected
+
+
+def test_cli_link(tmp_path):
+    a = tmp_path / "crm.csv"
+    a.write_text("name\nAcme Ltd\nGlobex\n", encoding="utf-8")
+    b = tmp_path / "invoices.csv"
+    b.write_text("customer\nGLOBEX\nInitech\nacme ltd.\n", encoding="utf-8")
+    out = tmp_path / "links.csv"
+    assert cli([str(a), "--column", "name", "--link", str(b), "--link-column", "customer", "-o", str(out)]) == 0
+    rows = list(csv.DictReader(out.open(encoding="utf-8")))
+    assert [(r["row"], r["other_row"]) for r in rows] == [("1", "3"), ("2", "1")]

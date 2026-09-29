@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0 — 2026-09-29
+
+- **License: Apache-2.0** (was MIT).
+- `link(left, right)`: exact matching between two lists (PASS-JOIN R-S join), plus `--link` in the CLI.
+- Multi-word bit-parallel edit distance (Myers 1999 §5, Hyyrö 2003) for strings over 64 characters.
+- Match masks built once per name instead of once per pair.
+- `method="auto"` now chooses between the index and all pairs from the data (typical edits per name).
+- Real-data benchmarks: Companies House names and the labelled DBLP-ACM set, with RapidFuzz as the baseline; CI checks that both tools return the same pairs.
+- Fixed: Rust property tests ignored `PROPTEST_CASES` because the case count was hard-coded.
+- CONTRIBUTING, SECURITY, CITATION.cff, NOTICE.
+
 ## 0.2.0 — 2026-09-29
 
 - PASS-JOIN partition index with the multi-match-aware window: compares only pairs that can match, with results identical to brute force. 8–10x faster than all-pairs from 20,000 names up.

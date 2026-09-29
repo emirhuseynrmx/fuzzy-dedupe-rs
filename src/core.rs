@@ -105,6 +105,122 @@ impl Pattern {
     }
 }
 
+/// Myers' algorithm for patterns longer than 64 characters: the pattern is cut
+/// into 64-bit blocks and the horizontal delta at each block's last row is
+/// carried into the next block (Myers 1999, section 5; Hyyrö 2003). Cost per
+/// text character is one pass over the blocks, i.e. O(n * m / 64) for the pair.
+pub struct BlockPattern {
+    blocks: usize,
+    ascii: Vec<u64>,
+    other: HashMap<char, Vec<u64>>,
+    len: usize,
+}
+
+impl BlockPattern {
+    pub fn new(pattern: &[char]) -> Self {
+        let blocks = pattern.len().div_ceil(64).max(1);
+        let mut ascii = vec![0u64; 128 * blocks];
+        let mut other: HashMap<char, Vec<u64>> = HashMap::new();
+        for (i, &c) in pattern.iter().enumerate() {
+            let (b, bit) = (i / 64, 1u64 << (i % 64));
+            if (c as u32) < 128 {
+                ascii[c as usize * blocks + b] |= bit;
+            } else {
+                other.entry(c).or_insert_with(|| vec![0; blocks])[b] |= bit;
+            }
+        }
+        BlockPattern {
+            blocks,
+            ascii,
+            other,
+            len: pattern.len(),
+        }
+    }
+
+    pub fn distance(&self, text: &[char]) -> usize {
+        let (m, nb) = (self.len, self.blocks);
+        if m == 0 {
+            return text.len();
+        }
+        let zeros = vec![0u64; nb];
+        let mut pv = vec![!0u64; nb];
+        let mut mv = vec![0u64; nb];
+        let top_last = 1u64 << ((m - 1) % 64);
+        let mut score = m as isize;
+        for &c in text {
+            let eqs: &[u64] = if (c as u32) < 128 {
+                &self.ascii[c as usize * nb..(c as usize + 1) * nb]
+            } else {
+                self.other.get(&c).map(Vec::as_slice).unwrap_or(&zeros)
+            };
+            // Global distance: the top row grows by one per column, so +1 enters block 0.
+            let mut hin: i32 = 1;
+            for b in 0..nb {
+                let top = if b + 1 == nb { top_last } else { 1u64 << 63 };
+                let (p, mm) = (pv[b], mv[b]);
+                let mut eq = eqs[b];
+                let xv = eq | mm;
+                if hin < 0 {
+                    eq |= 1;
+                }
+                let xh = ((eq & p).wrapping_add(p) ^ p) | eq;
+                let mut ph = mm | !(xh | p);
+                let mut mh = p & xh;
+                let hout = if ph & top != 0 {
+                    1
+                } else if mh & top != 0 {
+                    -1
+                } else {
+                    0
+                };
+                ph <<= 1;
+                mh <<= 1;
+                match hin.cmp(&0) {
+                    std::cmp::Ordering::Less => mh |= 1,
+                    std::cmp::Ordering::Greater => ph |= 1,
+                    std::cmp::Ordering::Equal => {}
+                }
+                pv[b] = mh | !(xv | ph);
+                mv[b] = ph & xv;
+                hin = hout;
+            }
+            score += hin as isize;
+        }
+        score as usize
+    }
+}
+
+/// A string prepared once as a Myers pattern, then compared against many others.
+/// Building the match masks is the expensive part, so it is done per name, not per pair.
+// The 1 KB mask table stays inline: a Prepared is built once per name and never moved in a loop.
+#[allow(clippy::large_enum_variant)]
+pub enum Prepared {
+    Empty,
+    Word(Pattern),
+    Blocks(BlockPattern),
+}
+
+impl Prepared {
+    pub fn new(s: &[char]) -> Self {
+        match Pattern::new(s) {
+            Some(p) => Prepared::Word(p),
+            None if s.is_empty() => Prepared::Empty,
+            None => Prepared::Blocks(BlockPattern::new(s)),
+        }
+    }
+
+    /// Edit distance between the prepared string and `text` (Myers is symmetric in effect:
+    /// the global distance doesn't depend on which side is the pattern).
+    #[inline]
+    pub fn distance(&self, text: &[char]) -> usize {
+        match self {
+            Prepared::Empty => text.len(),
+            Prepared::Word(p) => p.distance(text),
+            Prepared::Blocks(p) => p.distance(text),
+        }
+    }
+}
+
 /// Edit distance, bit-parallel when one side fits in 64 characters.
 pub fn levenshtein(a: &[char], b: &[char]) -> usize {
     if a.is_empty() {
@@ -116,8 +232,18 @@ pub fn levenshtein(a: &[char], b: &[char]) -> usize {
     let (short, long) = if a.len() <= b.len() { (a, b) } else { (b, a) };
     match Pattern::new(short) {
         Some(p) => p.distance(long),
-        None => levenshtein_dp(a, b),
+        None => BlockPattern::new(short).distance(long),
     }
+}
+
+/// Edit distance if it is at most `k`, otherwise `None`. The length
+/// difference is a lower bound, so hopeless pairs are rejected before any work.
+pub fn levenshtein_bounded(a: &[char], b: &[char], k: usize) -> Option<usize> {
+    if a.len().abs_diff(b.len()) > k {
+        return None;
+    }
+    let d = levenshtein(a, b);
+    (d <= k).then_some(d)
 }
 
 /// The largest edit distance `d` a pair with this longer length can have and
@@ -139,8 +265,9 @@ pub fn max_edits(longest: usize, threshold: f64) -> usize {
 pub type Pair = (usize, usize, f64);
 
 /// Score one pair the way the reference does, or `None` if it isn't a duplicate.
+/// `pa` is `a` prepared as a pattern.
 #[inline]
-fn score(a: &[char], b: &[char], threshold: f64) -> Option<f64> {
+fn score(pa: &Prepared, a: &[char], b: &[char], threshold: f64) -> Option<f64> {
     let longest = a.len().max(b.len());
     if longest == 0 {
         return Some(0.0);
@@ -148,8 +275,9 @@ fn score(a: &[char], b: &[char], threshold: f64) -> Option<f64> {
     if a.len().abs_diff(b.len()) as f64 / longest as f64 > threshold {
         return None;
     }
-    let s = levenshtein(a, b) as f64 / longest as f64;
-    (s <= threshold).then_some(s)
+    // Any d <= max_edits(longest) satisfies d / longest <= threshold, by definition.
+    let d = pa.distance(b);
+    (d <= max_edits(longest, threshold)).then(|| d as f64 / longest as f64)
 }
 
 /// Compare every pair. O(n^2), but the reference every other strategy is checked against.
@@ -158,8 +286,9 @@ pub fn pairs_brute(names: &[Vec<char>], threshold: f64) -> Vec<Pair> {
         .into_par_iter()
         .flat_map_iter(|i| {
             let a = &names[i];
+            let pa = Prepared::new(a);
             ((i + 1)..names.len())
-                .filter_map(move |j| score(a, &names[j], threshold).map(|s| (i, j, s)))
+                .filter_map(move |j| score(&pa, a, &names[j], threshold).map(|s| (i, j, s)))
         })
         .collect()
 }
@@ -204,6 +333,31 @@ pub fn pairs_indexed(names: &[Vec<char>], threshold: f64) -> Vec<Pair> {
     if threshold >= 0.5 || names.len() < 2 {
         return pairs_brute(names, threshold);
     }
+    indexed_join(names, threshold, |_, _| true)
+}
+
+/// Should `auto` compare all pairs instead of using the index? The index does
+/// about (k+1)^3 hash lookups per name, where k is the number of edits the name
+/// can absorb, so it loses on long strings at high thresholds (titles at 0.3:
+/// k ~ 18) while all-pairs cost grows with n^2. Measured cross-over on this
+/// project's benchmarks; the answer is the same either way, only the speed differs.
+pub fn prefer_brute(lengths: &[usize], threshold: f64) -> bool {
+    if threshold >= 0.5 || lengths.len() < 2 {
+        return true;
+    }
+    let mut ls = lengths.to_vec();
+    let mid = ls.len() / 2;
+    let (_, median, _) = ls.select_nth_unstable(mid);
+    max_edits(*median, threshold) >= 16 && lengths.len() <= 20_000
+}
+
+/// The PASS-JOIN search over `names`, reporting only pairs for which `keep(r, s)` holds.
+/// Each qualifying pair is found exactly once, when the longer name (or, at equal
+/// length, the later one) is probed.
+fn indexed_join<F>(names: &[Vec<char>], threshold: f64, keep: F) -> Vec<Pair>
+where
+    F: Fn(usize, usize) -> bool + Sync,
+{
     let max_len = names.iter().map(Vec::len).max().unwrap_or(0);
     let mut by_len: Vec<Vec<usize>> = vec![Vec::new(); max_len + 1];
     for (i, n) in names.iter().enumerate() {
@@ -252,7 +406,9 @@ pub fn pairs_indexed(names: &[Vec<char>], threshold: f64) -> Vec<Pair> {
                 if big == 0 {
                     // Two empty names are identical; pair each with the empties before it.
                     for &r in empties.iter().take_while(|&&r| r < s) {
-                        found.push((r, s, 0.0));
+                        if keep(r, s) {
+                            found.push((r, s, 0.0));
+                        }
                     }
                     return found;
                 }
@@ -261,7 +417,7 @@ pub fn pairs_indexed(names: &[Vec<char>], threshold: f64) -> Vec<Pair> {
                 let stamp = s as u32;
                 let mut add = |r: usize, cands: &mut Vec<u32>| {
                     let shorter = names[r].len() < big;
-                    if r != s && (shorter || r < s) && seen[r] != stamp {
+                    if r != s && (shorter || r < s) && seen[r] != stamp && keep(r, s) {
                         seen[r] = stamp;
                         cands.push(r as u32);
                     }
@@ -310,9 +466,10 @@ pub fn pairs_indexed(names: &[Vec<char>], threshold: f64) -> Vec<Pair> {
                         }
                     }
                 }
+                let pt = Prepared::new(text);
                 for &r in cands.iter() {
                     let r = r as usize;
-                    if let Some(sc) = score(&names[r], text, threshold) {
+                    if let Some(sc) = score(&pt, text, &names[r], threshold) {
                         found.push((r.min(s), r.max(s), sc));
                     }
                 }
@@ -320,6 +477,38 @@ pub fn pairs_indexed(names: &[Vec<char>], threshold: f64) -> Vec<Pair> {
             },
         )
         .flatten()
+        .collect();
+    out.sort_unstable_by_key(|&(i, j, _)| (i, j));
+    out
+}
+
+/// Pairs `(i, j, score)` between two lists: `left[i]` matches `right[j]`.
+/// All pairs, compared directly: the reference for `link_indexed`.
+pub fn link_brute(left: &[Vec<char>], right: &[Vec<char>], threshold: f64) -> Vec<Pair> {
+    (0..left.len())
+        .into_par_iter()
+        .flat_map_iter(|i| {
+            let a = &left[i];
+            let pa = Prepared::new(a);
+            right
+                .iter()
+                .enumerate()
+                .filter_map(move |(j, b)| score(&pa, a, b, threshold).map(|s| (i, j, s)))
+        })
+        .collect()
+}
+
+/// PASS-JOIN across two lists (the paper's R-S join): both lists go into one
+/// index and only cross-list pairs are verified. Equals `link_brute`.
+pub fn link_indexed(left: &[Vec<char>], right: &[Vec<char>], threshold: f64) -> Vec<Pair> {
+    if threshold >= 0.5 || left.is_empty() || right.is_empty() {
+        return link_brute(left, right, threshold);
+    }
+    let n = left.len();
+    let all: Vec<Vec<char>> = left.iter().chain(right.iter()).cloned().collect();
+    let mut out: Vec<Pair> = indexed_join(&all, threshold, |r, s| (r < n) != (s < n))
+        .into_iter()
+        .map(|(a, b, sc)| (a.min(b), a.max(b) - n, sc))
         .collect();
     out.sort_unstable_by_key(|&(i, j, _)| (i, j));
     out
@@ -372,6 +561,29 @@ mod tests {
     }
 
     #[test]
+    fn block_boundaries() {
+        // Pattern lengths around the 64-bit block edges, against dynamic programming.
+        let alphabet: Vec<char> = "abcşğ ".chars().collect();
+        let mut seed = 12345u64;
+        let mut next = |n: usize| -> Vec<char> {
+            (0..n)
+                .map(|_| {
+                    seed = seed
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
+                    alphabet[(seed >> 33) as usize % alphabet.len()]
+                })
+                .collect()
+        };
+        for m in [63, 64, 65, 127, 128, 129, 200] {
+            for n in [m - 3, m, m + 5] {
+                let (a, b) = (next(m), next(n));
+                assert_eq!(levenshtein(&a, &b), levenshtein_dp(&a, &b), "m={m} n={n}");
+            }
+        }
+    }
+
+    #[test]
     fn max_edits_matches_the_float_rule() {
         for len in 1..200 {
             for t in [0.0, 0.1, 0.15, 0.2, 0.25, 1.0 / 3.0, 0.45] {
@@ -402,13 +614,37 @@ mod tests {
         prop::string::string_regex("[abcçdeşğ ]{0,70}").unwrap()
     }
 
+    // Past 64 characters, to exercise the banded fallback.
+    fn long_name() -> impl Strategy<Value = String> {
+        prop::string::string_regex("[abç]{0,140}").unwrap()
+    }
+
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(300))]
+        // Default config, so PROPTEST_CASES (set in CI) controls the number of cases.
+        #![proptest_config(ProptestConfig::default())]
 
         #[test]
         fn myers_equals_dp(a in name(), b in name()) {
             let (a, b) = (chars(&a), chars(&b));
             prop_assert_eq!(levenshtein(&a, &b), levenshtein_dp(&a, &b));
+        }
+
+        #[test]
+        fn bounded_agrees_with_dp(a in long_name(), b in long_name(), k in 0usize..40) {
+            let (a, b) = (chars(&a), chars(&b));
+            let d = levenshtein_dp(&a, &b);
+            prop_assert_eq!(levenshtein_bounded(&a, &b, k), (d <= k).then_some(d));
+        }
+
+        #[test]
+        fn link_indexed_equals_brute(
+            left in prop::collection::vec(name(), 0..40),
+            right in prop::collection::vec(name(), 0..40),
+            t in 0.0f64..0.45,
+        ) {
+            let l: Vec<Vec<char>> = left.iter().map(|n| normalize(n, false)).collect();
+            let r: Vec<Vec<char>> = right.iter().map(|n| normalize(n, false)).collect();
+            prop_assert_eq!(link_indexed(&l, &r, t), link_brute(&l, &r, t));
         }
 
         #[test]

@@ -1,102 +1,180 @@
-<h1>
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
-    <img src="assets/logo-light.svg" alt="fuzzy-dedupe" width="560">
-  </picture>
-</h1>
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+  <img src="assets/logo-light.svg" alt="fuzzy-dedupe" width="620">
+</picture>
+
+**Exact near-duplicate detection and record linkage for names, at scale.**
 
 [![CI](https://github.com/emirhuseynrmx/fuzzy-dedupe-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/emirhuseynrmx/fuzzy-dedupe-rs/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/emirhuseynrmx/fuzzy-dedupe-rs/graph/badge.svg)](https://codecov.io/gh/emirhuseynrmx/fuzzy-dedupe-rs)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=emirhuseynrmx_fuzzy-dedupe-rs&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=emirhuseynrmx_fuzzy-dedupe-rs)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+![Python](https://img.shields.io/badge/python-3.9%20%E2%80%93%203.13-3776AB?logo=python&logoColor=white)
+![Rust](https://img.shields.io/badge/core-Rust-B7410E?logo=rust&logoColor=white)
 
-Find near-duplicate names in a list, "Acme Ltd", "ACME  ltd" and "Acme Ltd." being the same customer, **fast, and with exactly the answers a brute-force search would give.**
+[Quick start](#quick-start) · [Benchmarks](#benchmarks) · [How it works](#how-it-works) · [Correctness](#correctness) · [API](#api-reference) · [CLI](#command-line) · [FAQ](#faq)
 
-The core is Rust, called from Python (PyO3) or from the command line. It combines a partition filter from the similarity-join literature (PASS-JOIN) with bit-parallel edit distance (Myers / Hyyrö), so it compares only the pairs that can possibly match, and compares those in a few machine instructions per character. A plain-Python reference implementation ships alongside it, and the test suite checks that every strategy returns the same pairs as that reference.
+</div>
 
-## Results
+---
 
-3,000 to 100,000 synthetic company names with shared vocabulary and messy copies ([`bench/data.py`](bench/data.py)), threshold 0.2, on a Windows laptop (AMD, 12 threads, Python 3.13):
+fuzzy-dedupe finds names that refer to the same thing, `"Acme Ltd"`, `"ACME  ltd"`, `"Acme Ltd."`, inside one list or across two, and returns **exactly the pairs an exhaustive comparison would return**, only much faster.
 
-| Names | Duplicate pairs | Pure Python | Rust, all pairs | Rust, PASS-JOIN index |
-|---:|---:|---:|---:|---:|
-| 3,000 | 1,787 | 156.93 s | 55 ms | **18 ms** |
-| 20,000 | 24,547 | too slow | 2.14 s | **243 ms** |
-| 100,000 | 422,674 | too slow | 48.08 s | **5.75 s** |
+It is built for the cleanup work every data team runs into: merging CRM exports, matching invoices to customers, collapsing supplier lists, reconciling registries. The core is Rust; you use it from Python or from the command line.
 
-On one thread, 3,000 names take 312 ms comparing all pairs and 41 ms with the index. Every row of both tables was checked to return identical pairs across all strategies. Full output and the exact commands are in [`bench/results.md`](bench/results.md); run `python bench/bench.py` to measure your own machine.
+<table>
+<tr>
+<td width="33%" valign="top">
 
-Where the speed comes from, in order of size:
+**Exact, not approximate**<br>
+Every result is the result of a full comparison. The filter only skips pairs it can prove don't match, so nothing is lost and nothing is guessed.
 
-1. **Native code with bit-parallel distance:** the same all-pairs loop is roughly 500x faster than Python on one core.
-2. **The index:** checking only candidate pairs is 8–10x faster again at 20,000 names and up, and the gap grows with the list.
-3. **All cores:** rows are processed in parallel with rayon, with the GIL released.
+</td>
+<td width="33%" valign="top">
 
-## Why the answers are exact
+**Fast on real data**<br>
+35.6x faster than RapidFuzz `cdist` on 100,000 UK company names, returning the same 21,513 pairs. 800,000 names in 4.3 minutes on a laptop.
 
-A pair is a duplicate when `edit_distance / longer_length <= threshold`, after lowercasing and collapsing spaces. For a longer name of length `L`, that allows at most `k` edits, where `k` is the largest integer with `k / L <= threshold`.
+</td>
+<td width="33%" valign="top">
 
-- **Partition filter (PASS-JOIN).** Cut the shorter name into `k + 1` segments. Each edit can disturb at most one segment, so if the two names are within `k` edits, at least one segment survives untouched and appears verbatim in the longer name, shifted by a bounded amount. So every segment is put in a hash index, and only names that share a segment at a compatible position are compared. The position window is PASS-JOIN's multi-match-aware bound, which is proven not to lose pairs. Hash collisions only add candidates, which verification then rejects.
-- **Verification.** Each candidate gets the full edit distance and the same float comparison as the Python reference, so the scores match bit for bit.
-- **Fallbacks.** Thresholds of 0.5 and above leave segments too short to filter anything, so the search compares all pairs. Names too short to cut into `k + 1` segments are compared directly.
+**Checked against itself**<br>
+A pure-Python reference ships in the package. Property tests check on every change that the Rust core returns the same pairs, and CI checks that RapidFuzz does too.
 
-## How it works
+</td>
+</tr>
+</table>
 
-| Step | Technique | Source |
-|---|---|---|
-| Normalize | lowercase, collapse whitespace, optionally sort words (`token_sort`) | |
-| Filter | length filter, then PASS-JOIN partition index with the multi-match-aware window | Li, Deng, Wang, Feng. *PASS-JOIN: A Partition-based Method for Similarity Joins.* PVLDB 5(3), 2011. [arXiv:1111.7171](https://arxiv.org/abs/1111.7171) |
-| Verify | bit-parallel edit distance for names up to 64 characters, dynamic programming above | Myers. *A fast bit-vector algorithm for approximate string matching based on dynamic programming.* JACM 46(3), 1999. Hyyrö. *Explaining and extending the bit-parallel approximate string matching algorithm of Myers.* Tech. report A-2001-10, University of Tampere, 2001 |
-| Group | connected components with union-find (`cluster`) | Papadakis et al. *Blocking and Filtering Techniques for Entity Resolution: A Survey.* ACM CSUR 53(2), 2020. [arXiv:1905.06167](https://arxiv.org/abs/1905.06167) |
-
-## Install
-
-Build from source (Python 3.9+ and a Rust toolchain):
+## Quick start
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install maturin
-maturin develop --release
+git clone https://github.com/emirhuseynrmx/fuzzy-dedupe-rs && cd fuzzy-dedupe-rs
+python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install maturin && maturin develop --release
 ```
 
-## Python
-
 ```python
-from fuzzy_dedupe import find_duplicates, cluster
+from fuzzy_dedupe import find_duplicates, cluster, link
 
 names = ["Acme Ltd", "ACME  ltd", "Acme Ltd.", "Globex", "Ltd Acme"]
 
 find_duplicates(names, threshold=0.2)
 # [(0, 1, 0.0), (0, 2, 0.1111111111111111), (1, 2, 0.1111111111111111)]
 
-find_duplicates(names, threshold=0.2, token_sort=True)   # word order no longer matters
-# [(0, 1, 0.0), (0, 2, 0.1111111111111111), (0, 4, 0.0), (1, 2, 0.1111111111111111), (1, 4, 0.0), (2, 4, 0.1111111111111111)]
-
-cluster(names, threshold=0.2, token_sort=True)
+cluster(names, threshold=0.2, token_sort=True)              # word order ignored
 # [[0, 1, 2, 4]]
+
+link(["Acme Ltd", "Globex"], ["GLOBEX", "Initech", "acme ltd."])   # match two lists
+# [(0, 2, 0.1111111111111111), (1, 0, 0.0)]
 ```
 
-- `find_duplicates(names, threshold=0.2, *, token_sort=False, method="auto")` returns `(i, j, score)` with `i < j`, sorted. `score` is the edit distance divided by the longer name's length.
-- `cluster(...)` returns groups of two or more positions linked by any chain of pairs.
-- `method` is `"auto"`/`"indexed"` (PASS-JOIN) or `"brute"` (all pairs). They return the same result; `"brute"` exists for checking.
-- `find_duplicates_python` and `cluster_python` are the pure-Python reference with the same signature (no `method`).
+```bash
+fuzzy-dedupe customers.csv --column name --groups -o groups.csv
+fuzzy-dedupe crm.csv --column name --link invoices.csv --link-column customer
+```
+
+## Benchmarks
+
+All numbers below were measured on one Windows laptop (AMD, 12 threads, Python 3.13) with the scripts in [`bench/`](bench/). Full output, including the exact commands, is in [`bench/results.md`](bench/results.md). Your hardware and data will give different numbers; run the scripts to see yours.
+
+### Real company names vs RapidFuzz
+
+Companies House (UK) registered company names, a seeded random sample, threshold 0.1. RapidFuzz scores every pair with `process.cdist` on all cores; fuzzy-dedupe skips the pairs its index proves can't match. Both use the same measure on the same normalized strings, and **both returned identical pairs at every size.**
+
+| Names | Duplicate pairs | RapidFuzz `cdist` | fuzzy-dedupe | Speed-up |
+|---:|---:|---:|---:|---:|
+| 10,000 | 226 | 634 ms | **28 ms** | 22.3x |
+| 50,000 | 5,646 | 16.04 s | **459 ms** | 35.0x |
+| 100,000 | 21,513 | 61.17 s | **1.72 s** | 35.6x |
+| 800,000 | 1,383,297 | not run (all-pairs) | **258.8 s** | |
+
+On one thread each, 10,000 names take 2.89 s with RapidFuzz and 168 ms with fuzzy-dedupe (17.2x).
+
+### Labelled benchmark: DBLP-ACM
+
+Paper titles from two bibliographies, 2,616 x 2,294, with 2,224 known true matches ([Köpcke, Thor, Rahm, PVLDB 2010](https://dbs.uni-leipzig.de/research/projects/benchmark-datasets-for-entity-resolution)). Matching on the title alone:
+
+| Threshold | Pairs found | Precision | Recall | F1 | fuzzy-dedupe | RapidFuzz `cdist` |
+|---:|---:|---:|---:|---:|---:|---:|
+| 0.05 | 2,384 | 0.876 | 0.939 | 0.906 | **8 ms** | 63 ms |
+| 0.10 | 2,406 | 0.876 | 0.947 | 0.910 | **16 ms** | 62 ms |
+| 0.20 | 2,466 | 0.869 | 0.964 | **0.914** | **62 ms** | 66 ms |
+| 0.30 | 2,556 | 0.849 | 0.976 | 0.908 | 151 ms | **77 ms** |
+
+Both tools return the same pairs, so precision and recall are identical; only time differs. At 0.30 on long titles RapidFuzz is about 2x faster: each title then absorbs around 18 edits, the index filters little, and RapidFuzz's banded bit-parallel kernel is the better tool for that regime. See [Where it fits](#where-it-fits).
+
+### Against plain Python
+
+3,000 synthetic company names: 168.3 s in pure Python, 10 ms in fuzzy-dedupe, same pairs.
+
+## How it works
+
+```mermaid
+flowchart LR
+    A[Names] --> B[Normalize<br/>lowercase, collapse spaces,<br/>optional word sort]
+    B --> C{Pick strategy}
+    C -->|typical name absorbs<br/>fewer than 16 edits| D[PASS-JOIN index<br/>length + partition filter]
+    C -->|otherwise| E[All pairs]
+    D --> F[Verify candidates<br/>bit-parallel edit distance]
+    E --> F
+    F --> G[Pairs]
+    G --> H[Clusters<br/>union-find]
+```
+
+A pair matches when `edit_distance / longer_length <= threshold`. For a longer name of length `L` that allows at most `k` edits, the largest integer with `k / L <= threshold`.
+
+| Stage | What it does | Based on |
+|---|---|---|
+| Partition filter | Cut the shorter name into `k + 1` segments. Each edit disturbs at most one, so a true match keeps one segment intact, at a bounded offset in the other name. Segments go into a hash index; only names sharing a segment at a compatible position are compared. The position window is the multi-match-aware bound, proven complete. | Li, Deng, Wang, Feng. *PASS-JOIN: A Partition-based Method for Similarity Joins.* PVLDB 5(3), 2011. [arXiv:1111.7171](https://arxiv.org/abs/1111.7171) |
+| Two-list join | Both lists share one index; only cross-list pairs are verified. | PASS-JOIN, R-S join variant |
+| Verification, up to 64 chars | Myers' bit-vector algorithm: one DP column per text character in a few word operations. Match masks are built once per name and reused across its candidates. | Myers. *A fast bit-vector algorithm for approximate string matching based on dynamic programming.* JACM 46(3), 1999. Hyyrö. *Explaining and extending the bit-parallel approximate string matching algorithm of Myers.* Tech. report A-2001-10, Univ. of Tampere, 2001 |
+| Verification, longer | Multi-word blocks with the horizontal delta carried between blocks. | Myers 1999, §5. Hyyrö. *A bit-vector algorithm for computing Levenshtein and Damerau edit distances.* Nordic J. Computing 10(1), 2003 |
+| Grouping | Connected components of the match graph. | Papadakis et al. *Blocking and Filtering Techniques for Entity Resolution: A Survey.* ACM CSUR 53(2), 2020. [arXiv:1905.06167](https://arxiv.org/abs/1905.06167) |
+
+Work runs on all cores with rayon, with Python's GIL released.
+
+## Correctness
+
+"Exact" is the whole point, so it is tested as a property, not with examples:
+
+- **Rust, `cargo test`:** proptest checks, on random names and thresholds, that the index returns exactly the brute-force pairs (one list and two lists), that single-word and multi-word bit-parallel distances equal dynamic programming, and that the threshold arithmetic matches the float rule. CI runs 2,000 cases per property.
+- **Python, `pytest`:** Hypothesis generates lists with mixed case, spacing and non-ASCII characters and checks that `auto`, `indexed` and `brute` all equal the pure-Python reference, for pairs, clusters and links, at thresholds from 0 to 1, with and without `token_sort`.
+- **Cross-implementation:** CI runs the DBLP-ACM comparison on every push and fails if fuzzy-dedupe and RapidFuzz disagree on a single pair.
+- **Scores:** both implementations divide the same two integers, so scores match bit for bit.
+
+## API reference
+
+| Function | Returns |
+|---|---|
+| `find_duplicates(names, threshold=0.2, *, token_sort=False, method="auto")` | `list[(i, j, score)]`, `i < j`, sorted |
+| `cluster(names, threshold=0.2, *, token_sort=False, method="auto")` | `list[list[int]]`, groups of two or more |
+| `link(left, right, threshold=0.2, *, token_sort=False, method="auto")` | `list[(i, j, score)]`, `left[i]` matches `right[j]` |
+| `levenshtein(a, b)` | edit distance in characters |
+
+- `threshold` is in `[0, 1]`: the edit distance divided by the longer name's length.
+- `token_sort=True` sorts words before comparing, so `"Ltd Acme"` equals `"Acme Ltd"`.
+- `method`: `"auto"` picks the index or all pairs from the data; `"indexed"` and `"brute"` force one. All three return the same result.
+- `find_duplicates_python`, `cluster_python`, `link_python`: the pure-Python reference, same signatures without `method`.
+- Fully typed (`py.typed`).
 
 ## Command line
 
-```bash
-fuzzy-dedupe customers.csv --column name                       # pairs, CSV to stdout
-fuzzy-dedupe customers.csv --column name --groups -o groups.csv
-fuzzy-dedupe customers.csv --column name --threshold 0.15 --token-sort
+```text
+fuzzy-dedupe INPUT.csv --column NAME [--threshold 0.2] [--token-sort]
+                       [--groups | --link OTHER.csv [--link-column NAME]] [-o OUT.csv]
 ```
 
-## A real cleanup: check first, then dedupe
+| Mode | Output columns |
+|---|---|
+| pairs (default) | `row_a, row_b, name_a, name_b, score` |
+| `--groups` | `group, row, name` |
+| `--link` | `row, other_row, name, other_name, score` |
 
-[`examples/clean_customers.py`](examples/clean_customers.py) runs the whole job on a messy customer file. It checks the rows first with [ProofFrame](https://github.com/emirhuseynrmx/proofframe), my data validation library, so a missing name or a repeated id is reported instead of quietly skewing the result, then runs `find_duplicates` on the rows that passed.
+## Data quality first, with ProofFrame
 
-```bash
-pip install proofframe pyarrow pandas
-python examples/clean_customers.py examples/customers.csv
-```
+[`examples/clean_customers.py`](examples/clean_customers.py) validates a customer CSV with [ProofFrame](https://github.com/emirhuseynrmx/proofframe) before deduplicating it, so a missing name or a repeated id is reported instead of quietly skewing the result.
 
 ```text
 Step 1: checked 15 rows, 2 problems
@@ -105,43 +183,53 @@ Step 1: checked 15 rows, 2 problems
 
 Step 2: looking for duplicates in the 13 rows that passed
   #1 'Acme Ltd'               ~ #2 'ACME  ltd'              distance 0.00
-  #1 'Acme Ltd'               ~ #3 'Acme Ltd.'              distance 0.11
-  #2 'ACME  ltd'              ~ #3 'Acme Ltd.'              distance 0.11
   #9 'Şişecam A.Ş.'           ~ #10 'şişecam a.ş'            distance 0.08
   #12 'Stark Industries'       ~ #13 'Stark Industires'       distance 0.12
 ```
 
-## When to use something else
+## Where it fits
 
-- **[RapidFuzz](https://github.com/rapidfuzz/RapidFuzz)** for scoring functions (ratio, partial ratio, Jaro-Winkler) and top-k lookups. It is mature and fast; this project does one thing, an exact thresholded edit-distance self-join, and focuses on not comparing pairs that can't match.
-- **[Splink](https://github.com/moj-analytical-services/splink)** or **[dedupe](https://github.com/dedupeio/dedupe)** when records have several fields and you want probabilistic or learned matching.
-- **Embedding or LLM-based matching** when duplicates don't look alike as strings ("IBM" vs "International Business Machines").
+| You need | Use |
+|---|---|
+| Every pair within an edit-distance threshold, in one list or two, exactly | **fuzzy-dedupe** |
+| Many scoring functions (ratio, partial ratio, Jaro-Winkler), top-k lookups, or high thresholds on long strings | [RapidFuzz](https://github.com/rapidfuzz/RapidFuzz) |
+| Probabilistic or learned matching across several fields | [Splink](https://github.com/moj-analytical-services/splink), [dedupe](https://github.com/dedupeio/dedupe) |
+| Matches that don't look alike as strings ("IBM" / "International Business Machines") | embedding or LLM-based matching |
 
 ## Limitations
 
-- One similarity: character edit distance relative to the longer name. No phonetic or semantic matching.
-- `cluster` uses transitive closure, so a chain of close names can link two names that are far apart. That is the usual trade-off of connected components; inspect large groups.
-- Normalization is Unicode-aware lowercasing plus whitespace collapsing. Python's `str.split()` also treats a few ASCII control characters (`\x1c`–`\x1f`) as whitespace, while Rust doesn't; strip those before matching if your data has them.
-- The index keeps every segment of every name in memory, so memory grows with the total length of the names.
+- One similarity measure: character edit distance relative to the longer string. No phonetic or semantic matching.
+- `cluster` uses transitive closure, so a chain of close names can join two distant ones. Review large groups.
+- On long strings at high thresholds the index filters little and RapidFuzz is faster (see DBLP-ACM at 0.30).
+- Python's `str.split()` treats `\x1c`–`\x1f` as whitespace and Rust doesn't; strip those control characters first if your data has them.
+- The index holds every segment of every name in memory.
 
-## How it is tested
+## Reproduce the benchmarks
 
-- **Rust** (`cargo test`): property tests with proptest check that bit-parallel distance equals dynamic programming and that the PASS-JOIN index returns exactly the brute-force pairs, on random names and thresholds (2,000 cases each in CI), plus unit tests for the partition and threshold arithmetic.
-- **Python** (`pytest`): Hypothesis generates random lists with case, spacing and non-ASCII characters and checks that `auto`, `indexed` and `brute` all equal the Python reference, for pairs and clusters, at thresholds from 0 to 1, with and without `token_sort`. The CLI is tested end to end.
-- **CI** runs both on Linux, macOS and Windows with Python 3.9 and 3.13, builds wheels for all three, runs `cargo fmt`, `clippy -D warnings` and coverage. Actions are pinned to commit SHAs and test dependencies are installed from a hash-locked file, wheels only.
-
-## Layout
-
-```
-src/core.rs                      Algorithms: normalize, bit-parallel distance, PASS-JOIN, clusters
-src/lib.rs                       Python bindings (feature "python")
-python/fuzzy_dedupe/reference.py Pure-Python reference
-python/fuzzy_dedupe/cli.py       Command line
-tests/                           Python property and CLI tests
-bench/                           Data generator, timing script, results
-examples/clean_customers.py      Check a CSV with ProofFrame, then dedupe it
+```bash
+pip install rapidfuzz numpy
+python bench/rapidfuzz_compare.py --dblp-acm                               # downloads 270 KB
+python bench/rapidfuzz_compare.py --sizes 10000 50000 100000               # downloads Companies House part 1 (73 MB)
+python bench/bench.py 3000 20000 100000                                    # synthetic, includes pure Python
 ```
 
-## License
+Datasets are downloaded on first use into `bench/.cache/` and are not redistributed here.
 
-MIT
+## FAQ
+
+**Is it approximate, like MinHash or embeddings?**
+No. The filter is lossless: every pair within the threshold is returned, with the exact score.
+
+**Why is `threshold` relative to the longer name?**
+So that one setting works for short and long names alike: 0.1 allows one edit in ten characters, three in thirty.
+
+**Does it handle non-English names?**
+Yes. Comparison is on Unicode characters, not bytes, with Unicode-aware lowercasing (`Şişecam` equals `şişecam`).
+
+**Can I force a strategy?**
+Yes, `method="indexed"` or `method="brute"`. The result is identical; only speed changes.
+
+## Project
+
+- [CHANGELOG](CHANGELOG.md) · [CONTRIBUTING](CONTRIBUTING.md) · [SECURITY](SECURITY.md) · [CITATION](CITATION.cff)
+- Licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE).

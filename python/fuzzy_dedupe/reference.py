@@ -62,6 +62,25 @@ def find_duplicates(names: list[str], threshold: float = 0.2, *, token_sort: boo
     return out
 
 
+def link(left: list[str], right: list[str], threshold: float = 0.2, *, token_sort: bool = False) -> list[tuple[int, int, float]]:
+    """All pairs (i, j, score) where left[i] and right[j] are within the threshold, sorted."""
+    a_clean = [normalize(n, token_sort) for n in left]
+    b_clean = [normalize(n, token_sort) for n in right]
+    out = []
+    for i, a in enumerate(a_clean):
+        for j, b in enumerate(b_clean):
+            longest = max(len(a), len(b))
+            if longest == 0:
+                out.append((i, j, 0.0))
+                continue
+            if abs(len(a) - len(b)) / longest > threshold:
+                continue
+            score = levenshtein(a, b) / longest
+            if score <= threshold:
+                out.append((i, j, score))
+    return out
+
+
 def cluster(names: list[str], threshold: float = 0.2, *, token_sort: bool = False) -> list[list[int]]:
     """Groups of two or more names linked by any chain of duplicate pairs.
 

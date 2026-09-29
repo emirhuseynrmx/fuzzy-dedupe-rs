@@ -22,7 +22,15 @@ mod python {
             return Err(PyValueError::new_err("threshold must be between 0 and 1"));
         }
         match method {
-            "auto" | "indexed" => Ok(core::pairs_indexed(names, threshold)),
+            "auto" => {
+                let lens: Vec<usize> = names.iter().map(Vec::len).collect();
+                Ok(if core::prefer_brute(&lens, threshold) {
+                    core::pairs_brute(names, threshold)
+                } else {
+                    core::pairs_indexed(names, threshold)
+                })
+            }
+            "indexed" => Ok(core::pairs_indexed(names, threshold)),
             "brute" => Ok(core::pairs_brute(names, threshold)),
             other => Err(PyValueError::new_err(format!(
                 "unknown method {other:?}; use 'auto', 'indexed' or 'brute'"
@@ -62,6 +70,43 @@ mod python {
         })
     }
 
+    /// Pairs (i, j, score) where left[i] and right[j] are within the threshold.
+    #[pyfunction]
+    #[pyo3(signature = (left, right, threshold = 0.2, *, token_sort = false, method = "auto"))]
+    fn link(
+        py: Python<'_>,
+        left: Vec<String>,
+        right: Vec<String>,
+        threshold: f64,
+        token_sort: bool,
+        method: &str,
+    ) -> PyResult<Vec<core::Pair>> {
+        let (left, right) = (cleaned(&left, token_sort), cleaned(&right, token_sort));
+        if !(0.0..=1.0).contains(&threshold) {
+            return Err(PyValueError::new_err("threshold must be between 0 and 1"));
+        }
+        let brute = match method {
+            "auto" => {
+                let lens: Vec<usize> = left.iter().chain(right.iter()).map(Vec::len).collect();
+                core::prefer_brute(&lens, threshold)
+            }
+            "indexed" => false,
+            "brute" => true,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "unknown method {other:?}; use 'auto', 'indexed' or 'brute'"
+                )))
+            }
+        };
+        Ok(py.allow_threads(|| {
+            if brute {
+                core::link_brute(&left, &right, threshold)
+            } else {
+                core::link_indexed(&left, &right, threshold)
+            }
+        }))
+    }
+
     /// Edit distance between two strings, as characters (not bytes).
     #[pyfunction]
     fn levenshtein(a: &str, b: &str) -> usize {
@@ -73,6 +118,7 @@ mod python {
     fn _native(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_function(wrap_pyfunction!(find_duplicates, m)?)?;
         m.add_function(wrap_pyfunction!(cluster, m)?)?;
+        m.add_function(wrap_pyfunction!(link, m)?)?;
         m.add_function(wrap_pyfunction!(levenshtein, m)?)?;
         Ok(())
     }

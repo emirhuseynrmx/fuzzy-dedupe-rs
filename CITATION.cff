@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "fuzzy-dedupe: exact near-duplicate detection and record linkage for names"
+authors:
+  - family-names: "İnci"
+    given-names: "Emir Hüseyin"
+license: Apache-2.0
+version: 0.3.0
+date-released: 2026-09-29
+repository-code: "https://github.com/emirhuseynrmx/fuzzy-dedupe-rs"
+references:
+  - type: article
+    title: "PASS-JOIN: A Partition-based Method for Similarity Joins"
+    authors:
+      - family-names: Li
+        given-names: Guoliang
+      - family-names: Deng
+        given-names: Dong
+      - family-names: Wang
+        given-names: Jiannan
+      - family-names: Feng
+        given-names: Jianhua
+    journal: "Proceedings of the VLDB Endowment"
+    volume: 5
+    issue: 3
+    year: 2011
+  - type: article
+    title: "A fast bit-vector algorithm for approximate string matching based on dynamic programming"
+    authors:
+      - family-names: Myers
+        given-names: Gene
+    journal: "Journal of the ACM"
+    volume: 46
+    issue: 3
+    year: 1999

@@ -61,6 +61,12 @@ jobs:
         run: |
           python -m pip install --require-hashes --only-binary :all: -r ci/requirements-examples.txt
           python examples/clean_customers.py examples/customers.csv
+      - name: Same pairs as RapidFuzz on DBLP-ACM (labelled real data)
+        if: matrix.python == '3.13' && matrix.os == 'ubuntu-latest'
+        run: |
+          python -m pip install --require-hashes --only-binary :all: -r ci/requirements-compare.txt
+          python bench/rapidfuzz_compare.py --dblp-acm | tee compare.md
+          ! grep -q "| NO" compare.md
 
   coverage:
     name: coverage (Rust + Python)

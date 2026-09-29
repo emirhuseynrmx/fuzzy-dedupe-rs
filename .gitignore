@@ -11,3 +11,4 @@ python.xml
 .coverage
 coverage.xml
 *.pdb
+bench/.cache/
