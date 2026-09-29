@@ -8,15 +8,111 @@ use rayon::prelude::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Lowercase, collapse whitespace, and optionally sort the words, so that
-/// "ACME  Ltd" == "acme ltd" and, with `token_sort`, "Ltd Acme" == "Acme Ltd".
-pub fn normalize(name: &str, token_sort: bool) -> Vec<char> {
+/// Legal-form words dropped from the end of a name by `strip_suffixes`, compared
+/// after lowercasing and removing '.' and ','. Kept in step with `reference.py`.
+pub const LEGAL_SUFFIXES: &[&str] = &[
+    "limited",
+    "ltd",
+    "llc",
+    "llp",
+    "lp",
+    "plc",
+    "inc",
+    "incorporated",
+    "corp",
+    "corporation",
+    "co",
+    "company",
+    "gmbh",
+    "ag",
+    "kg",
+    "sa",
+    "sas",
+    "sarl",
+    "srl",
+    "spa",
+    "bv",
+    "nv",
+    "oy",
+    "ab",
+    "as",
+    "pty",
+    "pvt",
+    "aş",
+    "şti",
+    "ltdşti",
+];
+
+/// How names are cleaned before comparison.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Norm {
+    /// Sort the words, so "Ltd Acme" == "Acme Ltd".
+    pub token_sort: bool,
+    /// Drop legal-form words at the end ("Ltd", "Limited", "GmbH", "A.Ş."), repeatedly,
+    /// as long as at least one word is left.
+    pub strip_suffixes: bool,
+}
+
+fn is_legal_suffix(word: &str) -> bool {
+    let bare: String = word.chars().filter(|&c| c != '.' && c != ',').collect();
+    LEGAL_SUFFIXES.contains(&bare.as_str())
+}
+
+/// Lowercase, collapse whitespace, and apply the options in `norm`.
+pub fn normalize_with(name: &str, norm: Norm) -> Vec<char> {
     let lowered = name.to_lowercase();
     let mut words: Vec<&str> = lowered.split_whitespace().collect();
-    if token_sort {
+    if norm.strip_suffixes {
+        while words.len() > 1 && is_legal_suffix(words[words.len() - 1]) {
+            words.pop();
+        }
+    }
+    if norm.token_sort {
         words.sort_unstable();
     }
     words.join(" ").chars().collect()
+}
+
+/// Lowercase, collapse whitespace, and optionally sort the words, so that
+/// "ACME  Ltd" == "acme ltd" and, with `token_sort`, "Ltd Acme" == "Acme Ltd".
+pub fn normalize(name: &str, token_sort: bool) -> Vec<char> {
+    normalize_with(
+        name,
+        Norm {
+            token_sort,
+            strip_suffixes: false,
+        },
+    )
+}
+
+/// A character-frequency sketch: counts of characters hashed into 32 buckets.
+///
+/// One edit changes the counts by at most 2 in total (a substitution moves one
+/// character out and one in; an insertion or deletion moves one), so
+/// `edit_distance >= L1(counts_a - counts_b) / 2`. Bucketing and saturation only
+/// make the sum smaller, so it stays a lower bound (the frequency-distance bound
+/// of Kahveci and Singh, VLDB 2001). It rejects most far-apart pairs before any
+/// dynamic programming, and never rejects a match.
+pub type Sketch = [u8; 32];
+
+pub fn sketch(s: &[char]) -> Sketch {
+    let mut out = [0u8; 32];
+    for &c in s {
+        let b = ((c as u32).wrapping_mul(2_654_435_761) >> 27) as usize;
+        out[b] = out[b].saturating_add(1);
+    }
+    out
+}
+
+/// Lower bound on the edit distance from two sketches.
+#[inline]
+pub fn sketch_bound(a: &Sketch, b: &Sketch) -> usize {
+    let l1: u32 = a
+        .iter()
+        .zip(b.iter())
+        .map(|(&x, &y)| x.abs_diff(y) as u32)
+        .sum();
+    (l1 as usize).div_ceil(2)
 }
 
 /// Classic dynamic-programming edit distance, one row of memory.
@@ -138,6 +234,71 @@ impl BlockPattern {
         }
     }
 
+    /// Bits of the pattern's match mask for `c` in 64-bit word `word`.
+    #[inline]
+    fn word(&self, word: usize, c: char) -> u64 {
+        if (c as u32) < 128 {
+            self.ascii[c as usize * self.blocks + word]
+        } else {
+            self.other.get(&c).map_or(0, |v| v[word])
+        }
+    }
+
+    /// Edit distance if it is at most `max`, otherwise some value above `max`.
+    ///
+    /// Only cells within `max` of the diagonal can hold a value <= max, so a
+    /// 64-bit window of `2 * max + 1` rows is enough. The window slides down one
+    /// row per text character; the score is followed along the diagonal until the
+    /// window reaches the last row, then along the last row, and the search stops
+    /// once it can no longer end within `max` (Hyyrö 2003, the banded variant;
+    /// same scheme as RapidFuzz's small-band kernel). Needs `2 * max + 1 <= 64`,
+    /// `len > max` and a length difference of at most `max`.
+    pub fn distance_band(&self, text: &[char], max: usize) -> usize {
+        let (m, n) = (self.len, text.len());
+        debug_assert!(2 * max < 64 && m > max && m.abs_diff(n) <= max);
+        let mut vp: u64 = !0u64 << (63 - max);
+        let mut vn: u64 = 0;
+        let mut dist = max;
+        let diagonal: u64 = 1 << 63;
+        let mut horizontal: u64 = 1 << 62;
+        let mut start = max as isize + 1 - 64;
+        // The score can fall along the last row but never along the diagonal.
+        let break_score = max + n - (m - max);
+        for (i, &c) in text.iter().enumerate() {
+            let pm = if start < 0 {
+                self.word(0, c) << (-start) as u32
+            } else {
+                let (w, off) = (start as usize / 64, start as usize % 64);
+                let mut x = self.word(w, c) >> off;
+                if off != 0 && w + 1 < self.blocks {
+                    x |= self.word(w + 1, c) << (64 - off);
+                }
+                x
+            };
+            let d0 = (((pm & vp).wrapping_add(vp)) ^ vp) | pm | vn;
+            let hp = vn | !(d0 | vp);
+            let hn = d0 & vp;
+            if i < m - max {
+                dist += usize::from(d0 & diagonal == 0);
+            } else {
+                dist += usize::from(hp & horizontal != 0);
+                dist -= usize::from(hn & horizontal != 0);
+                horizontal >>= 1;
+            }
+            if dist > break_score {
+                return max + 1;
+            }
+            vp = hn | !((d0 >> 1) | hp);
+            vn = (d0 >> 1) & hp;
+            start += 1;
+        }
+        if dist <= max {
+            dist
+        } else {
+            max + 1
+        }
+    }
+
     pub fn distance(&self, text: &[char]) -> usize {
         let (m, nb) = (self.len, self.blocks);
         if m == 0 {
@@ -210,6 +371,20 @@ impl Prepared {
         }
     }
 
+    /// Edit distance if it is at most `max`, otherwise some value above `max`. Uses the
+    /// banded kernel for long strings when the band fits in one word.
+    #[inline]
+    pub fn distance_within(&self, text: &[char], max: usize) -> usize {
+        match self {
+            Prepared::Blocks(p)
+                if 2 * max < 64 && p.len > max && p.len.abs_diff(text.len()) <= max =>
+            {
+                p.distance_band(text, max)
+            }
+            _ => self.distance(text),
+        }
+    }
+
     /// Edit distance between the prepared string and `text` (Myers is symmetric in effect:
     /// the global distance doesn't depend on which side is the pattern).
     #[inline]
@@ -265,31 +440,76 @@ pub fn max_edits(longest: usize, threshold: f64) -> usize {
 
 pub type Pair = (usize, usize, f64);
 
+/// The threshold as a table: how many edits a pair may have, by longer length.
+/// `max_edits` involves float division, and pairs are counted in millions.
+pub struct Rule {
+    threshold: f64,
+    k: Vec<usize>,
+}
+
+impl Rule {
+    pub fn new(threshold: f64, max_len: usize) -> Self {
+        Rule {
+            threshold,
+            k: (0..=max_len).map(|l| max_edits(l, threshold)).collect(),
+        }
+    }
+
+    pub fn for_names<'a>(threshold: f64, names: impl IntoIterator<Item = &'a Vec<char>>) -> Self {
+        Rule::new(
+            threshold,
+            names.into_iter().map(Vec::len).max().unwrap_or(0),
+        )
+    }
+
+    #[inline]
+    pub fn k(&self, len: usize) -> usize {
+        match self.k.get(len) {
+            Some(&k) => k,
+            None => max_edits(len, self.threshold),
+        }
+    }
+}
+
 /// Score one pair the way the reference does, or `None` if it isn't a duplicate.
-/// `pa` is `a` prepared as a pattern.
+/// `pa` is `a` prepared as a pattern; `sa`, `sb` are the sketches of `a` and `b`.
 #[inline]
-fn score(pa: &Prepared, a: &[char], b: &[char], threshold: f64) -> Option<f64> {
+pub(crate) fn score(
+    pa: &Prepared,
+    a: &[char],
+    sa: &Sketch,
+    b: &[char],
+    sb: &Sketch,
+    rule: &Rule,
+) -> Option<f64> {
     let longest = a.len().max(b.len());
     if longest == 0 {
         return Some(0.0);
     }
-    if a.len().abs_diff(b.len()) as f64 / longest as f64 > threshold {
+    // k is the largest d with d / longest <= threshold, so every test below is exact:
+    // the length gap and the sketch bound are lower bounds on d, and d <= k is the rule itself.
+    let k = rule.k(longest);
+    if a.len().abs_diff(b.len()) > k || sketch_bound(sa, sb) > k {
         return None;
     }
-    // Any d <= max_edits(longest) satisfies d / longest <= threshold, by definition.
-    let d = pa.distance(b);
-    (d <= max_edits(longest, threshold)).then(|| d as f64 / longest as f64)
+    let d = pa.distance_within(b, k);
+    (d <= k).then(|| d as f64 / longest as f64)
 }
 
 /// Compare every pair. O(n^2), but the reference every other strategy is checked against.
 pub fn pairs_brute(names: &[Vec<char>], threshold: f64) -> Vec<Pair> {
+    let sk: Vec<Sketch> = names.par_iter().map(|n| sketch(n)).collect();
+    let sk = &sk;
+    let rule = Rule::for_names(threshold, names);
+    let rule = &rule;
     (0..names.len())
         .into_par_iter()
         .flat_map_iter(|i| {
             let a = &names[i];
             let pa = Prepared::new(a);
-            ((i + 1)..names.len())
-                .filter_map(move |j| score(&pa, a, &names[j], threshold).map(|s| (i, j, s)))
+            ((i + 1)..names.len()).filter_map(move |j| {
+                score(&pa, a, &sk[i], &names[j], &sk[j], rule).map(|s| (i, j, s))
+            })
         })
         .collect()
 }
@@ -297,7 +517,7 @@ pub fn pairs_brute(names: &[Vec<char>], threshold: f64) -> Vec<Pair> {
 /// Where segment `seg` of `k + 1` starts and how long it is, for a string of length `len`
 /// (PASS-JOIN's even partition: the last `len % (k+1)` segments are one longer).
 #[inline]
-fn segment(len: usize, k: usize, seg: usize) -> (usize, usize) {
+pub(crate) fn segment(len: usize, k: usize, seg: usize) -> (usize, usize) {
     let parts = k + 1;
     let base = len / parts;
     let longer = len % parts;
@@ -310,7 +530,7 @@ fn segment(len: usize, k: usize, seg: usize) -> (usize, usize) {
 }
 
 #[inline]
-fn key(len: usize, k: usize, seg: usize, chars: &[char]) -> u64 {
+pub(crate) fn key(len: usize, k: usize, seg: usize, chars: &[char]) -> u64 {
     // FNV-1a. A collision only adds a candidate, which verification then rejects.
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for v in [len as u64, k as u64, seg as u64]
@@ -413,6 +633,8 @@ where
     }
 
     let empties = &by_len[0];
+    let sk: Vec<Sketch> = names.par_iter().map(|n| sketch(n)).collect();
+    let rule = Rule::new(threshold, max_len);
     let mut out: Vec<Pair> = (0..names.len())
         .into_par_iter()
         .map_init(
@@ -490,7 +712,7 @@ where
                 let pt = Prepared::new(text);
                 for &r in cands.iter() {
                     let r = r as usize;
-                    if let Some(sc) = score(&pt, text, &names[r], threshold) {
+                    if let Some(sc) = score(&pt, text, &sk[s], &names[r], &sk[r], &rule) {
                         found.push((r.min(s), r.max(s), sc));
                     }
                 }
@@ -506,15 +728,19 @@ where
 /// Pairs `(i, j, score)` between two lists: `left[i]` matches `right[j]`.
 /// All pairs, compared directly: the reference for `link_indexed`.
 pub fn link_brute(left: &[Vec<char>], right: &[Vec<char>], threshold: f64) -> Vec<Pair> {
+    let sr: Vec<Sketch> = right.par_iter().map(|n| sketch(n)).collect();
+    let sr = &sr;
+    let rule = Rule::for_names(threshold, left.iter().chain(right.iter()));
+    let rule = &rule;
     (0..left.len())
         .into_par_iter()
         .flat_map_iter(|i| {
             let a = &left[i];
-            let pa = Prepared::new(a);
+            let (pa, sa) = (Prepared::new(a), sketch(a));
             right
                 .iter()
                 .enumerate()
-                .filter_map(move |(j, b)| score(&pa, a, b, threshold).map(|s| (i, j, s)))
+                .filter_map(move |(j, b)| score(&pa, a, &sa, b, &sr[j], rule).map(|s| (i, j, s)))
         })
         .collect()
 }
@@ -587,6 +813,74 @@ mod tests {
     }
 
     #[test]
+    fn strip_suffixes_drops_legal_forms() {
+        let n = |s: &str| -> String {
+            normalize_with(
+                s,
+                Norm {
+                    token_sort: false,
+                    strip_suffixes: true,
+                },
+            )
+            .into_iter()
+            .collect()
+        };
+        assert_eq!(n("Acme Ltd."), "acme");
+        assert_eq!(n("ACME  LIMITED"), "acme");
+        assert_eq!(n("Şişecam A.Ş."), "şişecam");
+        assert_eq!(n("Kuzey Gıda Ltd. Şti."), "kuzey gıda");
+        assert_eq!(n("Limited"), "limited"); // never strip the last word
+        assert_eq!(n("Ltd Acme"), "ltd acme"); // only at the end
+    }
+
+    #[test]
+    fn band_on_edited_long_strings() {
+        // Long strings with a known number of random edits, across every band width.
+        let alphabet: Vec<char> = "abcdeşğıö ".chars().collect();
+        let mut seed = 99u64;
+        let mut rnd = |n: usize| -> usize {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) as usize % n
+        };
+        let mut checked = 0;
+        for len in [65, 80, 100, 127, 128, 129, 150] {
+            for edits in 0..36 {
+                let a: Vec<char> = (0..len).map(|_| alphabet[rnd(alphabet.len())]).collect();
+                let mut b = a.clone();
+                for _ in 0..edits {
+                    let pos = rnd(b.len().max(1));
+                    match rnd(3) {
+                        0 if !b.is_empty() => {
+                            b.remove(pos);
+                        }
+                        1 => b.insert(pos, alphabet[rnd(alphabet.len())]),
+                        _ if !b.is_empty() => b[pos] = alphabet[rnd(alphabet.len())],
+                        _ => {}
+                    }
+                }
+                let d = levenshtein_dp(&a, &b);
+                let p = BlockPattern::new(&a);
+                for max in 0..32 {
+                    if a.len() > max && a.len().abs_diff(b.len()) <= max {
+                        let got = p.distance_band(&b, max);
+                        assert!(
+                            if d <= max { got == d } else { got > max },
+                            "len={len} edits={edits} max={max} d={d} got={got}"
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert!(
+            checked > 3000,
+            "only {checked} cases reached the band kernel"
+        );
+    }
+
+    #[test]
     fn block_boundaries() {
         // Pattern lengths around the 64-bit block edges, against dynamic programming.
         let alphabet: Vec<char> = "abcşğ ".chars().collect();
@@ -640,6 +934,11 @@ mod tests {
         prop::string::string_regex("[abcçdeşğ ]{0,70}").unwrap()
     }
 
+    // Around and past 64 characters, similar strings, to exercise the banded kernel.
+    fn band_name() -> impl Strategy<Value = String> {
+        prop::string::string_regex("(abcabçab){5,17}[abç]{0,12}").unwrap()
+    }
+
     // Past 64 characters, to exercise the banded fallback.
     fn long_name() -> impl Strategy<Value = String> {
         prop::string::string_regex("[abç]{0,140}").unwrap()
@@ -653,6 +952,27 @@ mod tests {
         fn myers_equals_dp(a in name(), b in name()) {
             let (a, b) = (chars(&a), chars(&b));
             prop_assert_eq!(levenshtein(&a, &b), levenshtein_dp(&a, &b));
+        }
+
+        #[test]
+        fn sketch_is_a_lower_bound(a in long_name(), b in long_name()) {
+            let (a, b) = (chars(&a), chars(&b));
+            prop_assert!(sketch_bound(&sketch(&a), &sketch(&b)) <= levenshtein_dp(&a, &b));
+        }
+
+        #[test]
+        fn band_agrees_with_dp(a in band_name(), b in band_name(), max in 0usize..32) {
+            let (a, b) = (chars(&a), chars(&b));
+            let d = levenshtein_dp(&a, &b);
+            let p = BlockPattern::new(&a);
+            if a.len() > max && a.len().abs_diff(b.len()) <= max {
+                let got = p.distance_band(&b, max);
+                if d <= max {
+                    prop_assert_eq!(got, d);
+                } else {
+                    prop_assert!(got > max);
+                }
+            }
         }
 
         #[test]

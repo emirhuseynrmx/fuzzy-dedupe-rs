@@ -1,8 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-09-29
 
-- `stats(names, threshold)`: pairs found, candidate pairs the index verified, and all possible pairs, to see how much work the filter skipped.
+- **`Index`**: a persistent, incremental index. `Index.build`, `add`, `query`, `query_many`, `save`, `load`. Answers "which stored names match this one?" without rescanning, with the same exact results as a full comparison, including names added after the index was built.
+- **`strip_suffixes=True`**: drops legal forms at the end of a name ("Ltd", "Limited", "LLC", "GmbH", "A.Ş.", "Ltd. Şti."). Available on every function, the `Index` and the CLI (`--strip-suffixes`). Measured on a labelled Companies House benchmark (`bench/suffix_quality.py`).
+- **Banded bit-parallel verification** (Hyyrö 2003) for strings over 64 characters when the edit budget fits in one machine word: the case where RapidFuzz used to be faster.
+- **Character-frequency lower bound** (Kahveci and Singh, VLDB 2001) rejects far-apart pairs before any dynamic programming.
+- The edit budget per length is computed once per search instead of once per pair.
+- `stats(names, threshold)`: pairs found, candidate pairs the index verified, and all possible pairs.
+- New benchmarks: `bench/index_bench.py`, `bench/suffix_quality.py`.
 
 ## 0.3.0 — 2026-09-29
 

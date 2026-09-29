@@ -100,3 +100,60 @@ def test_stats_counts_are_consistent(ns, t):
     assert found == len(find_duplicates_python(ns, t))
     assert allpairs == len(ns) * (len(ns) - 1) // 2
     assert found <= verified <= allpairs  # every pair found was verified; the filter never adds pairs
+
+
+# ---- 0.4: strip_suffixes and the persistent Index ----
+
+SUFFIX_WORDS = st.sampled_from(["", " Ltd", " Ltd.", " LIMITED", " GmbH", " A.Ş.", " Ltd. Şti.", " Inc", " co"])
+company_names = st.lists(st.builds(lambda a, b: a + b, st.text(alphabet=ALPHABET, max_size=25), SUFFIX_WORDS), max_size=30)
+
+
+@settings(max_examples=300, deadline=None)
+@given(company_names, thresholds, st.booleans())
+def test_strip_suffixes_matches_python(ns, t, token_sort):
+    expected = find_duplicates_python(ns, t, token_sort=token_sort, strip_suffixes=True)
+    for method in ("auto", "indexed", "brute"):
+        assert find_duplicates(ns, t, token_sort=token_sort, strip_suffixes=True, method=method) == expected
+
+
+@settings(max_examples=300, deadline=None)
+@given(company_names, company_names, st.lists(st.text(alphabet=ALPHABET, max_size=30), min_size=1, max_size=6),
+       thresholds, st.booleans())
+def test_index_query_equals_full_comparison(first, later, queries, t, strip):
+    from fuzzy_dedupe import Index, link_python
+
+    idx = Index.build(first, t, strip_suffixes=strip)
+    idx.add(later)
+    stored = first + later
+    assert len(idx) == len(stored) and idx.names() == stored
+    for q in queries:
+        expected = [(j, s) for _, j, s in link_python([q], stored, t, strip_suffixes=strip)]
+        assert idx.query(q) == expected
+    assert idx.query_many(queries) == [idx.query(q) for q in queries]
+
+
+def test_index_save_and_load(tmp_path):
+    from fuzzy_dedupe import Index
+
+    idx = Index.build(["Acme Ltd", "Globex Corp", "Şişecam A.Ş."], 0.15, token_sort=True, strip_suffixes=True)
+    path = tmp_path / "names.idx.json"
+    idx.save(path)
+    back = Index.load(path)
+    assert (back.threshold, back.token_sort, back.strip_suffixes) == (0.15, True, True)
+    assert back.names() == idx.names()
+    for q in ["ACME", "globex", "şişecam", "nothing like it"]:
+        assert back.query(q) == idx.query(q)
+    (tmp_path / "bad.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError):
+        Index.load(tmp_path / "bad.json")
+
+
+def test_cli_strip_suffixes(tmp_path):
+    src = tmp_path / "in.csv"
+    src.write_text("name\nAcme Ltd\nAcme Limited\nGlobex\n", encoding="utf-8")
+    out = tmp_path / "pairs.csv"
+    assert cli([str(src), "--column", "name", "--threshold", "0.0", "-o", str(out)]) == 0
+    assert list(csv.DictReader(out.open(encoding="utf-8"))) == []
+    assert cli([str(src), "--column", "name", "--threshold", "0.0", "--strip-suffixes", "-o", str(out)]) == 0
+    rows = list(csv.DictReader(out.open(encoding="utf-8")))
+    assert [(r["row_a"], r["row_b"]) for r in rows] == [("1", "2")]

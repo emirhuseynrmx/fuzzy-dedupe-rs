@@ -25,6 +25,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--column", required=True, help="column with the names")
     p.add_argument("--threshold", type=float, default=0.2, help="max edit distance / longer length (default 0.2)")
     p.add_argument("--token-sort", action="store_true", help="ignore word order ('Ltd Acme' == 'Acme Ltd')")
+    p.add_argument("--strip-suffixes", action="store_true", help="drop legal forms at the end ('Acme Ltd.' == 'Acme')")
     p.add_argument("--groups", action="store_true", help="output groups instead of pairs")
     p.add_argument("--link", metavar="OTHER_CSV", help="match against the rows of another CSV instead of deduplicating")
     p.add_argument("--link-column", help="column in OTHER_CSV (default: same as --column)")
@@ -54,20 +55,20 @@ def main(argv: list[str] | None = None) -> int:
     try:
         w = csv.writer(out)
         if args.link:
-            pairs = link(names, other, args.threshold, token_sort=args.token_sort)
+            pairs = link(names, other, args.threshold, token_sort=args.token_sort, strip_suffixes=args.strip_suffixes)
             w.writerow(["row", "other_row", "name", "other_name", "score"])
             for i, j, s in pairs:
                 w.writerow([i + 1, j + 1, names[i], other[j], f"{s:.4f}"])
             found = f"{len(pairs):,} matches against {len(other):,} rows"
         elif args.groups:
-            groups = cluster(names, args.threshold, token_sort=args.token_sort)
+            groups = cluster(names, args.threshold, token_sort=args.token_sort, strip_suffixes=args.strip_suffixes)
             w.writerow(["group", "row", args.column])
             for g, members in enumerate(groups, 1):
                 for i in members:
                     w.writerow([g, i + 1, names[i]])
             found = f"{len(groups):,} groups"
         else:
-            pairs = find_duplicates(names, args.threshold, token_sort=args.token_sort)
+            pairs = find_duplicates(names, args.threshold, token_sort=args.token_sort, strip_suffixes=args.strip_suffixes)
             w.writerow(["row_a", "row_b", "name_a", "name_b", "score"])
             for i, j, s in pairs:
                 w.writerow([i + 1, j + 1, names[i], names[j], f"{s:.4f}"])

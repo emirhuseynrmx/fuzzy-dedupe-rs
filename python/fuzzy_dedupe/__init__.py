@@ -8,14 +8,15 @@
     >>> link(["Acme Ltd", "Globex"], ["GLOBEX", "Initech", "acme ltd."])
     [(0, 2, 0.1111111111111111), (1, 0, 0.0)]
 
-`find_duplicates`, `cluster` and `link` run in Rust. The `*_python` functions are the
+`find_duplicates`, `cluster`, `link` and `Index` run in Rust. The `*_python` functions are the
 pure-Python reference they are tested against.
 """
 
 from ._native import cluster, find_duplicates, levenshtein, link, stats
+from .index import Index
 from .reference import cluster as cluster_python
 from .reference import find_duplicates as find_duplicates_python
 from .reference import link as link_python
 
-__all__ = ["cluster", "cluster_python", "find_duplicates", "find_duplicates_python", "levenshtein", "link", "link_python", "stats"]
-__version__ = "0.3.0"
+__all__ = ["Index", "cluster", "cluster_python", "find_duplicates", "find_duplicates_python", "levenshtein", "link", "link_python", "stats"]
+__version__ = "0.4.0"
