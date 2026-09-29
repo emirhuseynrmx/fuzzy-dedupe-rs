@@ -151,6 +151,7 @@ Work runs on all cores with rayon, with Python's GIL released.
 | `find_duplicates(names, threshold=0.2, *, token_sort=False, method="auto")` | `list[(i, j, score)]`, `i < j`, sorted |
 | `cluster(names, threshold=0.2, *, token_sort=False, method="auto")` | `list[list[int]]`, groups of two or more |
 | `link(left, right, threshold=0.2, *, token_sort=False, method="auto")` | `list[(i, j, score)]`, `left[i]` matches `right[j]` |
+| `stats(names, threshold=0.2, *, token_sort=False)` | `(pairs found, candidate pairs verified, all pairs)`: how much work the index skipped |
 | `levenshtein(a, b)` | edit distance in characters |
 
 - `threshold` is in `[0, 1]`: the edit distance divided by the longer name's length.

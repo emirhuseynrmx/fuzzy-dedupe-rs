@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `stats(names, threshold)`: pairs found, candidate pairs the index verified, and all possible pairs, to see how much work the filter skipped.
+
 ## 0.3.0 — 2026-09-29
 
 - **License: Apache-2.0** (was MIT).

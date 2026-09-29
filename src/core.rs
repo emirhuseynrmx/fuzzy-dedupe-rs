@@ -6,6 +6,7 @@
 
 use rayon::prelude::*;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Lowercase, collapse whitespace, and optionally sort the words, so that
 /// "ACME  Ltd" == "acme ltd" and, with `token_sort`, "Ltd Acme" == "Acme Ltd".
@@ -333,7 +334,19 @@ pub fn pairs_indexed(names: &[Vec<char>], threshold: f64) -> Vec<Pair> {
     if threshold >= 0.5 || names.len() < 2 {
         return pairs_brute(names, threshold);
     }
-    indexed_join(names, threshold, |_, _| true)
+    indexed_join(names, threshold, |_, _| true, &AtomicUsize::new(0))
+}
+
+/// Like `pairs_indexed`, and also how many candidate pairs the filter let
+/// through to verification (the work an exact search can't avoid).
+pub fn pairs_indexed_stats(names: &[Vec<char>], threshold: f64) -> (Vec<Pair>, usize) {
+    if threshold >= 0.5 || names.len() < 2 {
+        let n = names.len();
+        return (pairs_brute(names, threshold), n * n.saturating_sub(1) / 2);
+    }
+    let verified = AtomicUsize::new(0);
+    let pairs = indexed_join(names, threshold, |_, _| true, &verified);
+    (pairs, verified.into_inner())
 }
 
 /// Should `auto` compare all pairs instead of using the index? The index does
@@ -354,7 +367,12 @@ pub fn prefer_brute(lengths: &[usize], threshold: f64) -> bool {
 /// The PASS-JOIN search over `names`, reporting only pairs for which `keep(r, s)` holds.
 /// Each qualifying pair is found exactly once, when the longer name (or, at equal
 /// length, the later one) is probed.
-fn indexed_join<F>(names: &[Vec<char>], threshold: f64, keep: F) -> Vec<Pair>
+fn indexed_join<F>(
+    names: &[Vec<char>],
+    threshold: f64,
+    keep: F,
+    verified: &AtomicUsize,
+) -> Vec<Pair>
 where
     F: Fn(usize, usize) -> bool + Sync,
 {
@@ -410,6 +428,8 @@ where
                             found.push((r, s, 0.0));
                         }
                     }
+                    // Two empty names are compared trivially; count them as verified too.
+                    verified.fetch_add(found.len(), Ordering::Relaxed);
                     return found;
                 }
                 let k = k_of[big];
@@ -466,6 +486,7 @@ where
                         }
                     }
                 }
+                verified.fetch_add(cands.len(), Ordering::Relaxed);
                 let pt = Prepared::new(text);
                 for &r in cands.iter() {
                     let r = r as usize;
@@ -506,10 +527,15 @@ pub fn link_indexed(left: &[Vec<char>], right: &[Vec<char>], threshold: f64) -> 
     }
     let n = left.len();
     let all: Vec<Vec<char>> = left.iter().chain(right.iter()).cloned().collect();
-    let mut out: Vec<Pair> = indexed_join(&all, threshold, |r, s| (r < n) != (s < n))
-        .into_iter()
-        .map(|(a, b, sc)| (a.min(b), a.max(b) - n, sc))
-        .collect();
+    let mut out: Vec<Pair> = indexed_join(
+        &all,
+        threshold,
+        |r, s| (r < n) != (s < n),
+        &AtomicUsize::new(0),
+    )
+    .into_iter()
+    .map(|(a, b, sc)| (a.min(b), a.max(b) - n, sc))
+    .collect();
     out.sort_unstable_by_key(|&(i, j, _)| (i, j));
     out
 }

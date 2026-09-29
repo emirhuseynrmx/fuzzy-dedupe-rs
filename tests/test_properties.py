@@ -89,3 +89,14 @@ def test_cli_link(tmp_path):
     assert cli([str(a), "--column", "name", "--link", str(b), "--link-column", "customer", "-o", str(out)]) == 0
     rows = list(csv.DictReader(out.open(encoding="utf-8")))
     assert [(r["row"], r["other_row"]) for r in rows] == [("1", "3"), ("2", "1")]
+
+
+@settings(max_examples=200, deadline=None)
+@given(names, st.sampled_from([0.0, 0.1, 0.2, 0.3, 0.45]))
+def test_stats_counts_are_consistent(ns, t):
+    from fuzzy_dedupe import stats
+
+    found, verified, allpairs = stats(ns, t)
+    assert found == len(find_duplicates_python(ns, t))
+    assert allpairs == len(ns) * (len(ns) - 1) // 2
+    assert found <= verified <= allpairs  # every pair found was verified; the filter never adds pairs

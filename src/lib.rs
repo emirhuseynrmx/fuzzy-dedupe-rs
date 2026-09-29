@@ -107,6 +107,24 @@ mod python {
         }))
     }
 
+    /// Search statistics: pairs found and candidate pairs verified by the index.
+    #[pyfunction]
+    #[pyo3(signature = (names, threshold = 0.2, *, token_sort = false))]
+    fn stats(
+        py: Python<'_>,
+        names: Vec<String>,
+        threshold: f64,
+        token_sort: bool,
+    ) -> PyResult<(usize, usize, usize)> {
+        if !(0.0..=1.0).contains(&threshold) {
+            return Err(PyValueError::new_err("threshold must be between 0 and 1"));
+        }
+        let names = cleaned(&names, token_sort);
+        let n = names.len();
+        let (pairs, verified) = py.allow_threads(|| core::pairs_indexed_stats(&names, threshold));
+        Ok((pairs.len(), verified, n * n.saturating_sub(1) / 2))
+    }
+
     /// Edit distance between two strings, as characters (not bytes).
     #[pyfunction]
     fn levenshtein(a: &str, b: &str) -> usize {
@@ -119,6 +137,7 @@ mod python {
         m.add_function(wrap_pyfunction!(find_duplicates, m)?)?;
         m.add_function(wrap_pyfunction!(cluster, m)?)?;
         m.add_function(wrap_pyfunction!(link, m)?)?;
+        m.add_function(wrap_pyfunction!(stats, m)?)?;
         m.add_function(wrap_pyfunction!(levenshtein, m)?)?;
         Ok(())
     }

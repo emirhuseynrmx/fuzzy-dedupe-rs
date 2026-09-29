@@ -12,10 +12,10 @@
 pure-Python reference they are tested against.
 """
 
-from ._native import cluster, find_duplicates, levenshtein, link
+from ._native import cluster, find_duplicates, levenshtein, link, stats
 from .reference import cluster as cluster_python
 from .reference import find_duplicates as find_duplicates_python
 from .reference import link as link_python
 
-__all__ = ["cluster", "cluster_python", "find_duplicates", "find_duplicates_python", "levenshtein", "link", "link_python"]
+__all__ = ["cluster", "cluster_python", "find_duplicates", "find_duplicates_python", "levenshtein", "link", "link_python", "stats"]
 __version__ = "0.3.0"
