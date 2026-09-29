@@ -8,6 +8,8 @@ grows with the square of the list.
 
 from __future__ import annotations
 
+import re
+
 
 # Legal-form words dropped from the end by `strip_suffixes`, compared after
 # lowercasing and removing '.' and ','. Kept in step with LEGAL_SUFFIXES in src/core.rs.
@@ -18,16 +20,44 @@ LEGAL_SUFFIXES = frozenset({
 })
 
 
-def normalize(name: str, token_sort: bool = False, strip_suffixes: bool = False) -> str:
+# Turkish legal-form and trade words dropped from the end with `strip_suffixes` in
+# Turkish mode, ASCII-folded. Sector words ("tekstil", "gida") are not in the list.
+# Kept in step with TURKISH_SUFFIXES in src/core.rs.
+TURKISH_SUFFIXES = frozenset({
+    "sanayi", "san", "sanayii", "ticaret", "tic", "ve", "anonim", "sirketi", "sirket", "sti",
+    "ltdsti", "limited", "ltd", "as", "ithalat", "ihracat", "ith", "ihr", "ic", "dis", "kollektif",
+    "koll", "komandit", "kom", "kooperatifi", "koop", "ortakligi", "adi",
+})
+
+_TURKISH_FOLD = str.maketrans({"ç": "c", "ğ": "g", "ı": "i", "ö": "o", "ş": "s", "ü": "u",
+                               "â": "a", "î": "i", "û": "u", "\u0307": None})
+
+
+def turkish_lower(name: str) -> str:
+    """Turkish lowercasing (I -> ı, İ -> i), then Turkish letters folded to ASCII."""
+    return name.replace("I", "ı").replace("İ", "i").lower().translate(_TURKISH_FOLD)
+
+
+def _is_legal_suffix(word: str, turkish: bool) -> bool:
+    def listed(w: str) -> bool:
+        return w in LEGAL_SUFFIXES or (turkish and w in TURKISH_SUFFIXES)
+
+    bare = word.replace(".", "").replace(",", "")
+    pieces = [p for p in re.split(r"[.,]", word) if p]
+    return listed(bare) or (bool(pieces) and all(listed(p) for p in pieces))
+
+
+def normalize(name: str, token_sort: bool = False, strip_suffixes: bool = False, turkish: bool = False) -> str:
     """Lowercase and collapse whitespace, so 'ACME  Ltd' and 'acme ltd' compare equal.
 
-    With `strip_suffixes`, legal-form words at the end are dropped ('Acme Ltd.' -> 'acme'),
-    as long as one word is left. With `token_sort`, the words are sorted, so 'Ltd Acme'
-    equals 'Acme Ltd'.
+    With `turkish`, Turkish case rules apply and Turkish letters fold to ASCII, so
+    'TEKSTİL', 'TEKSTIL' and 'Tekstil' agree. With `strip_suffixes`, legal-form words at
+    the end are dropped ('Acme Ltd.' -> 'acme'; in Turkish mode also 'Sanayi ve Ticaret
+    Ltd. Şti.'), as long as one word is left. With `token_sort`, the words are sorted.
     """
-    words = name.lower().split()
+    words = (turkish_lower(name) if turkish else name.lower()).split()
     if strip_suffixes:
-        while len(words) > 1 and words[-1].replace(".", "").replace(",", "") in LEGAL_SUFFIXES:
+        while len(words) > 1 and _is_legal_suffix(words[-1], turkish):
             words.pop()
     if token_sort:
         words.sort()
@@ -52,13 +82,13 @@ def levenshtein(a: str, b: str) -> int:
 
 
 def find_duplicates(names: list[str], threshold: float = 0.2, *, token_sort: bool = False,
-                    strip_suffixes: bool = False) -> list[tuple[int, int, float]]:
+                    strip_suffixes: bool = False, turkish: bool = False) -> list[tuple[int, int, float]]:
     """All pairs (i, j, score) with i < j whose normalized distance is <= threshold.
 
     `score` is the edit distance divided by the longer name's length. Both
     versions divide the same two integers, so the floats match bit for bit.
     """
-    cleaned = [normalize(n, token_sort, strip_suffixes) for n in names]
+    cleaned = [normalize(n, token_sort, strip_suffixes, turkish) for n in names]
     out = []
     for i in range(len(cleaned)):
         a = cleaned[i]
@@ -78,10 +108,10 @@ def find_duplicates(names: list[str], threshold: float = 0.2, *, token_sort: boo
 
 
 def link(left: list[str], right: list[str], threshold: float = 0.2, *, token_sort: bool = False,
-         strip_suffixes: bool = False) -> list[tuple[int, int, float]]:
+         strip_suffixes: bool = False, turkish: bool = False) -> list[tuple[int, int, float]]:
     """All pairs (i, j, score) where left[i] and right[j] are within the threshold, sorted."""
-    a_clean = [normalize(n, token_sort, strip_suffixes) for n in left]
-    b_clean = [normalize(n, token_sort, strip_suffixes) for n in right]
+    a_clean = [normalize(n, token_sort, strip_suffixes, turkish) for n in left]
+    b_clean = [normalize(n, token_sort, strip_suffixes, turkish) for n in right]
     out = []
     for i, a in enumerate(a_clean):
         for j, b in enumerate(b_clean):
@@ -98,7 +128,7 @@ def link(left: list[str], right: list[str], threshold: float = 0.2, *, token_sor
 
 
 def cluster(names: list[str], threshold: float = 0.2, *, token_sort: bool = False,
-            strip_suffixes: bool = False) -> list[list[int]]:
+            strip_suffixes: bool = False, turkish: bool = False) -> list[list[int]]:
     """Groups of two or more names linked by any chain of duplicate pairs.
 
     Each group is a sorted list of positions; groups are ordered by their first member.
@@ -111,7 +141,7 @@ def cluster(names: list[str], threshold: float = 0.2, *, token_sort: bool = Fals
             x = parent[x]
         return x
 
-    for i, j, _ in find_duplicates(names, threshold, token_sort=token_sort, strip_suffixes=strip_suffixes):
+    for i, j, _ in find_duplicates(names, threshold, token_sort=token_sort, strip_suffixes=strip_suffixes, turkish=turkish):
         a, b = find(i), find(j)
         if a != b:
             parent[max(a, b)] = min(a, b)

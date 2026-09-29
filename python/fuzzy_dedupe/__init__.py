@@ -19,4 +19,4 @@ from .reference import find_duplicates as find_duplicates_python
 from .reference import link as link_python
 
 __all__ = ["Index", "cluster", "cluster_python", "find_duplicates", "find_duplicates_python", "levenshtein", "link", "link_python", "stats"]
-__version__ = "0.4.0"
+__version__ = "0.5.0"

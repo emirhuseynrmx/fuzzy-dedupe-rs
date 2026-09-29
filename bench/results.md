@@ -80,3 +80,24 @@ Machine: AMD64 Family 25 Model 33 Stepping 2, AuthenticAMD, 12 thread(s), Python
 | 3,000 | 1,787 | 148.45 s | 8 ms | 8 ms | 1.0x |
 | 20,000 | 24,547 | skipped | 302 ms | 83 ms | 3.6x |
 | 100,000 | 422,674 | skipped | 7.93 s | 1.02 s | 7.8x |
+
+## Turkish mode, real Turkish legal names (GLEIF)
+
+`python bench/turkish_quality.py`
+
+13,324 rows (9,992 Turkish legal names from GLEIF plus messy copies), 4,147 true duplicate pairs.
+
+| Threshold | Settings | Pairs found | Precision | Recall | F1 |
+|---:|---|---:|---:|---:|---:|
+| 0.05 | default | 2,495 | 0.395 | 0.238 | 0.297 |
+| 0.05 | strip_suffixes | 2,501 | 0.397 | 0.239 | 0.298 |
+| 0.05 | turkish | 4,207 | 0.523 | 0.530 | 0.526 |
+| 0.05 | turkish + strip_suffixes | 5,020 | 0.619 | 0.749 | 0.678 |
+| 0.1 | default | 17,984 | 0.075 | 0.326 | 0.122 |
+| 0.1 | strip_suffixes | 17,996 | 0.076 | 0.329 | 0.123 |
+| 0.1 | turkish | 22,577 | 0.106 | 0.577 | 0.179 |
+| 0.1 | turkish + strip_suffixes | 20,975 | 0.164 | 0.831 | 0.274 |
+| 0.15 | default | 58,927 | 0.034 | 0.490 | 0.064 |
+| 0.15 | strip_suffixes | 58,936 | 0.035 | 0.491 | 0.065 |
+| 0.15 | turkish | 74,091 | 0.033 | 0.587 | 0.062 |
+| 0.15 | turkish + strip_suffixes | 62,373 | 0.057 | 0.854 | 0.106 |

@@ -157,3 +157,53 @@ def test_cli_strip_suffixes(tmp_path):
     assert cli([str(src), "--column", "name", "--threshold", "0.0", "--strip-suffixes", "-o", str(out)]) == 0
     rows = list(csv.DictReader(out.open(encoding="utf-8")))
     assert [(r["row_a"], r["row_b"]) for r in rows] == [("1", "2")]
+
+
+# ---- 0.5: Turkish mode ----
+
+TR_ALPHABET = "abcçdegğhıiİIoöşsuüÂâ "
+TR_TAILS = st.sampled_from(["", " A.Ş.", " Ltd. Şti.", " San. ve Tic. Ltd. Şti.", " SANAYİ VE TİCARET LİMİTED ŞİRKETİ",
+                            " İthalat İhracat A.Ş.", " SAN.VE TIC.LTD.STI.", " Anonim Şirketi", " ve Ortakları"])
+tr_names = st.lists(st.builds(lambda a, b: a + b, st.text(alphabet=TR_ALPHABET, max_size=20), TR_TAILS), max_size=30)
+
+
+@settings(max_examples=400, deadline=None)
+@given(tr_names, thresholds, st.booleans(), st.booleans())
+def test_turkish_mode_matches_python(ns, t, strip, token_sort):
+    expected = find_duplicates_python(ns, t, token_sort=token_sort, strip_suffixes=strip, turkish=True)
+    for method in ("auto", "indexed", "brute"):
+        assert find_duplicates(ns, t, token_sort=token_sort, strip_suffixes=strip, turkish=True, method=method) == expected
+
+
+@settings(max_examples=200, deadline=None)
+@given(tr_names, tr_names, st.lists(st.text(alphabet=TR_ALPHABET, max_size=25), min_size=1, max_size=5), thresholds)
+def test_turkish_index_and_link_match_python(first, later, queries, t):
+    from fuzzy_dedupe import Index, link, link_python
+
+    assert link(first, later, t, strip_suffixes=True, turkish=True) == link_python(first, later, t, strip_suffixes=True, turkish=True)
+    idx = Index.build(first, t, strip_suffixes=True, turkish=True)
+    idx.add(later)
+    stored = first + later
+    for q in queries:
+        assert idx.query(q) == [(j, s) for _, j, s in link_python([q], stored, t, strip_suffixes=True, turkish=True)]
+
+
+def test_turkish_spellings_agree():
+    from fuzzy_dedupe.reference import normalize
+
+    same = ["ABC TEKSTİL SANAYİ VE TİCARET LİMİTED ŞİRKETİ", "Abc Tekstil San. ve Tic. Ltd. Şti.",
+            "ABC TEKSTIL SAN.VE TIC.LTD.STI.", "abc tekstıl sanayi ve ticaret ltd şti"]
+    assert {normalize(s, strip_suffixes=True, turkish=True) for s in same} == {"abc tekstil"}
+    assert find_duplicates(same, 0.0, strip_suffixes=True, turkish=True) == [(i, j, 0.0) for i in range(4) for j in range(i + 1, 4)]
+    assert find_duplicates(same, 0.0) == []  # without Turkish mode none of them match exactly
+    assert normalize("İSTANBUL", turkish=True) == normalize("Istanbul", turkish=True) == "istanbul"
+    assert normalize("Ahmet Yılmaz ve Ortakları Kollektif Şirketi", strip_suffixes=True, turkish=True) == "ahmet yilmaz ve ortaklari"
+
+
+def test_turkish_index_saves_its_mode(tmp_path):
+    from fuzzy_dedupe import Index
+
+    idx = Index.build(["Kuzey Gıda A.Ş."], 0.1, strip_suffixes=True, turkish=True)
+    idx.save(tmp_path / "tr.json")
+    back = Index.load(tmp_path / "tr.json")
+    assert back.turkish and back.query("KUZEY GIDA SANAYİ VE TİCARET LTD. ŞTİ.") == [(0, 0.0)]

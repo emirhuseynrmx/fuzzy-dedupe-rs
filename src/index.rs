@@ -196,7 +196,7 @@ mod tests {
     use proptest::prelude::*;
 
     fn name() -> impl Strategy<Value = String> {
-        prop::string::string_regex("[abcçdeşğ ]{0,40}").unwrap()
+        prop::string::string_regex("[abcçdeşğİIıi ]{0,40}( (Ltd|San|Tic|ve|Şti|A.Ş.))?").unwrap()
     }
 
     fn brute(stored: &[String], q: &str, t: f64, norm: Norm) -> Vec<(usize, f64)> {
@@ -222,8 +222,9 @@ mod tests {
             queries in prop::collection::vec(name(), 1..8),
             t in 0.0f64..0.6,
             strip in any::<bool>(),
+            tr in any::<bool>(),
         ) {
-            let norm = Norm { token_sort: false, strip_suffixes: strip };
+            let norm = Norm { token_sort: false, strip_suffixes: strip, turkish: tr };
             let mut idx = Index::new(t, norm);
             idx.add(&first);
             idx.add(&later); // incremental: added after the first batch was indexed

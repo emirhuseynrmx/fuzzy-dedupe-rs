@@ -56,13 +56,14 @@ mod python {
 
     /// All pairs (i, j, score) with i < j whose normalized edit distance is <= threshold.
     #[pyfunction]
-    #[pyo3(signature = (names, threshold = 0.2, *, token_sort = false, strip_suffixes = false, method = "auto"))]
+    #[pyo3(signature = (names, threshold = 0.2, *, token_sort = false, strip_suffixes = false, turkish = false, method = "auto"))]
     fn find_duplicates(
         py: Python<'_>,
         names: Vec<String>,
         threshold: f64,
         token_sort: bool,
         strip_suffixes: bool,
+        turkish: bool,
         method: &str,
     ) -> PyResult<Vec<core::Pair>> {
         let names = cleaned(
@@ -70,6 +71,7 @@ mod python {
             Norm {
                 token_sort,
                 strip_suffixes,
+                turkish,
             },
         );
         // No Python objects are touched from here on, so other Python threads keep running.
@@ -78,13 +80,14 @@ mod python {
 
     /// Groups of names linked by any chain of duplicate pairs, each a sorted list of positions.
     #[pyfunction]
-    #[pyo3(signature = (names, threshold = 0.2, *, token_sort = false, strip_suffixes = false, method = "auto"))]
+    #[pyo3(signature = (names, threshold = 0.2, *, token_sort = false, strip_suffixes = false, turkish = false, method = "auto"))]
     fn cluster(
         py: Python<'_>,
         names: Vec<String>,
         threshold: f64,
         token_sort: bool,
         strip_suffixes: bool,
+        turkish: bool,
         method: &str,
     ) -> PyResult<Vec<Vec<usize>>> {
         let names = cleaned(
@@ -92,6 +95,7 @@ mod python {
             Norm {
                 token_sort,
                 strip_suffixes,
+                turkish,
             },
         );
         py.allow_threads(|| {
@@ -101,8 +105,10 @@ mod python {
     }
 
     /// Pairs (i, j, score) where left[i] and right[j] are within the threshold.
+    // The arguments mirror the Python signature one to one.
+    #[allow(clippy::too_many_arguments)]
     #[pyfunction]
-    #[pyo3(signature = (left, right, threshold = 0.2, *, token_sort = false, strip_suffixes = false, method = "auto"))]
+    #[pyo3(signature = (left, right, threshold = 0.2, *, token_sort = false, strip_suffixes = false, turkish = false, method = "auto"))]
     fn link(
         py: Python<'_>,
         left: Vec<String>,
@@ -110,12 +116,14 @@ mod python {
         threshold: f64,
         token_sort: bool,
         strip_suffixes: bool,
+        turkish: bool,
         method: &str,
     ) -> PyResult<Vec<core::Pair>> {
         check_threshold(threshold)?;
         let norm = Norm {
             token_sort,
             strip_suffixes,
+            turkish,
         };
         let (left, right) = (cleaned(&left, norm), cleaned(&right, norm));
         let brute = use_brute(
@@ -134,13 +142,14 @@ mod python {
 
     /// Search statistics: pairs found and candidate pairs verified by the index.
     #[pyfunction]
-    #[pyo3(signature = (names, threshold = 0.2, *, token_sort = false, strip_suffixes = false))]
+    #[pyo3(signature = (names, threshold = 0.2, *, token_sort = false, strip_suffixes = false, turkish = false))]
     fn stats(
         py: Python<'_>,
         names: Vec<String>,
         threshold: f64,
         token_sort: bool,
         strip_suffixes: bool,
+        turkish: bool,
     ) -> PyResult<(usize, usize, usize)> {
         check_threshold(threshold)?;
         let names = cleaned(
@@ -148,6 +157,7 @@ mod python {
             Norm {
                 token_sort,
                 strip_suffixes,
+                turkish,
             },
         );
         let n = names.len();
@@ -171,8 +181,13 @@ mod python {
     #[pymethods]
     impl PyIndex {
         #[new]
-        #[pyo3(signature = (threshold = 0.2, *, token_sort = false, strip_suffixes = false))]
-        fn new(threshold: f64, token_sort: bool, strip_suffixes: bool) -> PyResult<Self> {
+        #[pyo3(signature = (threshold = 0.2, *, token_sort = false, strip_suffixes = false, turkish = false))]
+        fn new(
+            threshold: f64,
+            token_sort: bool,
+            strip_suffixes: bool,
+            turkish: bool,
+        ) -> PyResult<Self> {
             check_threshold(threshold)?;
             Ok(PyIndex {
                 inner: index::Index::new(
@@ -180,6 +195,7 @@ mod python {
                     Norm {
                         token_sort,
                         strip_suffixes,
+                        turkish,
                     },
                 ),
             })
@@ -221,6 +237,11 @@ mod python {
         #[getter]
         fn strip_suffixes(&self) -> bool {
             self.inner.norm().strip_suffixes
+        }
+
+        #[getter]
+        fn turkish(&self) -> bool {
+            self.inner.norm().turkish
         }
 
         fn __len__(&self) -> usize {

@@ -79,6 +79,12 @@ link(["Acme Ltd", "Globex"], ["GLOBEX", "Initech", "acme ltd."])   # match two l
 
 find_duplicates(["Acme Ltd", "Acme Limited"], threshold=0.0, strip_suffixes=True)
 # [(0, 1, 0.0)]                                            # legal forms ignored
+
+find_duplicates(["ABC TEKSTİL SANAYİ VE TİCARET LİMİTED ŞİRKETİ",
+                 "Abc Tekstil San. ve Tic. Ltd. Şti.",
+                 "ABC TEKSTIL SAN.VE TIC.LTD.STI."],
+                threshold=0.0, strip_suffixes=True, turkish=True)
+# [(0, 1, 0.0), (0, 2, 0.0), (1, 2, 0.0)]                  # Turkish case, letters and legal tail
 ```
 
 **Check new records against a stored index**
@@ -149,6 +155,19 @@ Real registry names contain boilerplate ("Limited", "Ltd", "GmbH") that makes di
 | 0.10 | 0.547 | **0.806** | 0.791 | 0.822 |
 | 0.15 | 0.306 | **0.552** | 0.403 | 0.875 |
 
+### Turkish names: `turkish=True`
+
+Turkish data breaks generic normalization three ways: `"İ".lower()` is not `"i"` and `"I".lower()` is not `"ı"`; the same name is typed with and without Turkish letters (`TEKSTİL` / `TEKSTIL`); and the legal tail is long and written a dozen ways (`SANAYİ VE TİCARET ANONİM ŞİRKETİ`, `SAN. VE TİC. A.Ş.`, `SAN.TİC.A.Ş.`). On 9,992 real Turkish legal names from the GLEIF register plus messy copies with a known ground truth (4,147 true duplicate pairs, [`bench/turkish_quality.py`](bench/turkish_quality.py)), threshold 0.05:
+
+| Settings | Precision | Recall | F1 |
+|---|---:|---:|---:|
+| default | 0.395 | 0.238 | 0.297 |
+| `strip_suffixes` | 0.397 | 0.239 | 0.298 |
+| `turkish` | 0.523 | 0.530 | 0.526 |
+| **`turkish` + `strip_suffixes`** | **0.619** | **0.749** | **0.678** |
+
+Generic legal-form stripping does almost nothing on Turkish names; Turkish mode more than doubles F1. Precision stays modest because many Turkish legal names share long activity lists in the middle ("MADENCİLİK MAKİNA İNŞAAT HAYVANCILIK"), which edit distance counts as similarity; higher thresholds make that worse (full table in [`bench/results.md`](bench/results.md)).
+
 ### Against plain Python
 
 3,000 synthetic company names: 148.5 s in pure Python, 8 ms in fuzzy-dedupe, same pairs.
@@ -193,15 +212,15 @@ Work runs on all cores with rayon, with Python's GIL released.
 
 | Function | Returns |
 |---|---|
-| `find_duplicates(names, threshold=0.2, *, token_sort=False, strip_suffixes=False, method="auto")` | `list[(i, j, score)]`, `i < j`, sorted |
-| `cluster(names, threshold=0.2, *, token_sort=False, strip_suffixes=False, method="auto")` | `list[list[int]]`, groups of two or more |
-| `link(left, right, threshold=0.2, *, token_sort=False, strip_suffixes=False, method="auto")` | `list[(i, j, score)]`, `left[i]` matches `right[j]` |
-| `stats(names, threshold=0.2, *, token_sort=False, strip_suffixes=False)` | `(pairs found, candidate pairs verified, all pairs)`: how much work the filters skipped |
+| `find_duplicates(names, threshold=0.2, *, token_sort=False, strip_suffixes=False, turkish=False, method="auto")` | `list[(i, j, score)]`, `i < j`, sorted |
+| `cluster(names, threshold=0.2, *, token_sort=False, strip_suffixes=False, turkish=False, method="auto")` | `list[list[int]]`, groups of two or more |
+| `link(left, right, threshold=0.2, *, token_sort=False, strip_suffixes=False, turkish=False, method="auto")` | `list[(i, j, score)]`, `left[i]` matches `right[j]` |
+| `stats(names, threshold=0.2, *, token_sort=False, strip_suffixes=False, turkish=False)` | `(pairs found, candidate pairs verified, all pairs)`: how much work the filters skipped |
 | `levenshtein(a, b)` | edit distance in characters |
 
 | `Index` | |
 |---|---|
-| `Index(threshold=0.2, *, token_sort=False, strip_suffixes=False)` | empty index |
+| `Index(threshold=0.2, *, token_sort=False, strip_suffixes=False, turkish=False)` | empty index |
 | `Index.build(names, threshold, ...)` | index holding `names`, ids `0..len-1` |
 | `idx.add(names)` | id of the first new name; ids are consecutive |
 | `idx.query(name)` | `list[(id, score)]`, sorted by id |
@@ -211,7 +230,8 @@ Work runs on all cores with rayon, with Python's GIL released.
 
 - `threshold` is in `[0, 1]`: the edit distance divided by the longer name's length.
 - `token_sort=True` sorts words before comparing, so `"Ltd Acme"` equals `"Acme Ltd"`.
-- `strip_suffixes=True` drops legal forms at the end: Ltd, Limited, LLC, LLP, PLC, Inc, Corp, Co, GmbH, AG, SA, SRL, BV, NV, Pty, A.Ş., Ltd. Şti. and similar, as long as one word remains.
+- `strip_suffixes=True` drops legal forms at the end: Ltd, Limited, LLC, LLP, PLC, Inc, Corp, Co, GmbH, AG, SA, SRL, BV, NV, Pty, A.Ş., Ltd. Şti. and similar, as long as one word remains. Runs written without spaces (`Tic.Ltd.Şti.`) count if every dot-separated piece is a legal word.
+- `turkish=True` applies Turkish case rules (`I` → `ı`, `İ` → `i`) and folds Turkish letters to ASCII (`ç ğ ı ö ş ü â î û`), so `TEKSTİL`, `TEKSTIL`, `Tekstil` and `tekstıl` agree. With `strip_suffixes` it also drops the Turkish legal and trade tail: Sanayi ve Ticaret, San. ve Tic., Anonim/Limited Şirketi, A.Ş., Ltd. Şti., İthalat İhracat, İç ve Dış Ticaret, Kollektif/Komandit Şirketi. Sector words such as Tekstil or Gıda are kept: they tell companies apart.
 - `method`: `"auto"` picks the index or all pairs from the data; `"indexed"` and `"brute"` force one. All three return the same result.
 - `find_duplicates_python`, `cluster_python`, `link_python`: the pure-Python reference, same signatures without `method`.
 - Fully typed (`py.typed`).
@@ -219,7 +239,7 @@ Work runs on all cores with rayon, with Python's GIL released.
 ## Command line
 
 ```text
-fuzzy-dedupe INPUT.csv --column NAME [--threshold 0.2] [--token-sort] [--strip-suffixes]
+fuzzy-dedupe INPUT.csv --column NAME [--threshold 0.2] [--token-sort] [--strip-suffixes] [--turkish]
                        [--groups | --link OTHER.csv [--link-column NAME]] [-o OUT.csv]
 ```
 
@@ -258,7 +278,8 @@ Step 2: looking for duplicates in the 13 rows that passed
 
 - One similarity measure: character edit distance relative to the longer string. No phonetic or semantic matching.
 - `cluster` uses transitive closure, so a chain of close names can join two distant ones. Review large groups.
-- The legal-form list for `strip_suffixes` is fixed (common English, European and Turkish forms); it isn't configurable yet.
+- The legal-form lists for `strip_suffixes` are fixed (common English and European forms, plus the Turkish tail in Turkish mode); they aren't configurable yet, and only the end of a name is stripped.
+- Turkish mode folds `ı`/`i`, `ş`/`s` and the rest, so two different words that differ only in those letters become equal. For company names that is the intended trade-off.
 - Python's `str.split()` treats `\x1c`–`\x1f` as whitespace and Rust doesn't; strip those control characters first if your data has them.
 - The index keeps every name and its segments in memory; `save` stores names, not the index, so `load` rebuilds it (800,000 names in about a second on the benchmark machine).
 
@@ -270,6 +291,7 @@ python bench/rapidfuzz_compare.py --dblp-acm                               # dow
 python bench/rapidfuzz_compare.py --sizes 10000 50000 100000               # downloads Companies House part 1 (73 MB)
 python bench/index_bench.py --n 800000 --queries 1000
 python bench/suffix_quality.py --n 50000
+python bench/turkish_quality.py                                            # downloads Turkish legal names from GLEIF
 python bench/bench.py 3000 20000 100000                                    # synthetic, includes pure Python
 ```
 
@@ -287,7 +309,7 @@ So that one setting works for short and long names alike: 0.1 allows one edit in
 Yes. Each name is indexed for every edit budget it can ever need, so the results after any sequence of `add` calls equal a full scan; the property tests check exactly that.
 
 **Does it handle non-English names?**
-Yes. Comparison is on Unicode characters, not bytes, with Unicode-aware lowercasing (`Şişecam` equals `şişecam`), and `strip_suffixes` knows Turkish legal forms.
+Yes. Comparison is on Unicode characters, not bytes, with Unicode-aware lowercasing. Turkish has a dedicated mode (`turkish=True`) for its dotted and dotless i, text typed without Turkish letters, and its long legal tails.
 
 **Can I force a strategy?**
 Yes, `method="indexed"` or `method="brute"`. The result is identical; only speed changes.

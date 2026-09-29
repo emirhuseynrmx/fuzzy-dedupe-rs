@@ -28,21 +28,22 @@ VERSION = 1
 class Index(_Index):
     """Names you can query one at a time, with the same exact results as a full comparison.
 
-    Index(threshold=0.2, *, token_sort=False, strip_suffixes=False)
+    Index(threshold=0.2, *, token_sort=False, strip_suffixes=False, turkish=False)
     """
 
     @classmethod
     def build(cls, names: Iterable[str], threshold: float = 0.2, *, token_sort: bool = False,
-              strip_suffixes: bool = False) -> Index:
+              strip_suffixes: bool = False, turkish: bool = False) -> Index:
         """An index holding `names`, with ids 0..len(names)-1."""
-        idx = cls(threshold, token_sort=token_sort, strip_suffixes=strip_suffixes)
+        idx = cls(threshold, token_sort=token_sort, strip_suffixes=strip_suffixes, turkish=turkish)
         idx.add(list(names))
         return idx
 
     def save(self, path: str | Path) -> None:
         """Write the settings and names to `path` as UTF-8 JSON."""
         data = {"format": FORMAT, "version": VERSION, "threshold": self.threshold,
-                "token_sort": self.token_sort, "strip_suffixes": self.strip_suffixes, "names": self.names()}
+                "token_sort": self.token_sort, "strip_suffixes": self.strip_suffixes, "turkish": self.turkish,
+                "names": self.names()}
         Path(path).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
     @classmethod
@@ -52,8 +53,8 @@ class Index(_Index):
         if data.get("format") != FORMAT or data.get("version") != VERSION:
             raise ValueError(f"{path} is not a {FORMAT} v{VERSION} file")
         return cls.build(data["names"], data["threshold"], token_sort=data["token_sort"],
-                         strip_suffixes=data["strip_suffixes"])
+                         strip_suffixes=data["strip_suffixes"], turkish=data.get("turkish", False))
 
     def __repr__(self) -> str:
         return (f"Index(names={len(self):,}, threshold={self.threshold}, token_sort={self.token_sort}, "
-                f"strip_suffixes={self.strip_suffixes})")
+                f"strip_suffixes={self.strip_suffixes}, turkish={self.turkish})")

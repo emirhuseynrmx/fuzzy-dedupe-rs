@@ -43,6 +43,77 @@ pub const LEGAL_SUFFIXES: &[&str] = &[
     "ltdşti",
 ];
 
+/// Turkish legal-form and trade words dropped from the end with `strip_suffixes` in
+/// Turkish mode, in their ASCII-folded form: "Sanayi ve Ticaret Limited Şirketi",
+/// "San. ve Tic. Ltd. Şti.", "İthalat İhracat", "İç ve Dış Ticaret", "Anonim Şirketi",
+/// "Kollektif/Komandit Şirketi". Sector words ("tekstil", "gıda") are not in the list:
+/// they tell companies apart. Kept in step with `reference.py`.
+pub const TURKISH_SUFFIXES: &[&str] = &[
+    "sanayi",
+    "san",
+    "sanayii",
+    "ticaret",
+    "tic",
+    "ve",
+    "anonim",
+    "sirketi",
+    "sirket",
+    "sti",
+    "ltdsti",
+    "limited",
+    "ltd",
+    "as",
+    "ithalat",
+    "ihracat",
+    "ith",
+    "ihr",
+    "ic",
+    "dis",
+    "kollektif",
+    "koll",
+    "komandit",
+    "kom",
+    "kooperatifi",
+    "koop",
+    "ortakligi",
+    "adi",
+];
+
+/// Turkish letters folded to ASCII, as Turkish data is often typed without them:
+/// "TEKSTİL", "TEKSTIL", "Tekstil" and "tekstıl" all become "tekstil".
+fn fold_turkish_char(c: char) -> Option<char> {
+    match c {
+        'ç' => Some('c'),
+        'ğ' => Some('g'),
+        'ı' => Some('i'),
+        'ö' => Some('o'),
+        'ş' => Some('s'),
+        'ü' => Some('u'),
+        'â' => Some('a'),
+        'î' => Some('i'),
+        'û' => Some('u'),
+        '\u{307}' => None, // combining dot above, left over from "İ" lowercased elsewhere
+        other => Some(other),
+    }
+}
+
+/// Turkish lowercasing (I -> ı, İ -> i) followed by ASCII folding of Turkish letters.
+pub fn turkish_lower(name: &str) -> String {
+    let dotted: String = name
+        .chars()
+        .map(|c| match c {
+            'I' => 'ı',
+            'İ' => 'i',
+            other => other,
+        })
+        .collect();
+    dotted
+        .to_lowercase()
+        .chars()
+        .filter_map(fold_turkish_char)
+        .collect()
+}
+
 /// How names are cleaned before comparison.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Norm {
@@ -51,19 +122,31 @@ pub struct Norm {
     /// Drop legal-form words at the end ("Ltd", "Limited", "GmbH", "A.Ş."), repeatedly,
     /// as long as at least one word is left.
     pub strip_suffixes: bool,
+    /// Turkish case rules and ASCII folding of Turkish letters; with `strip_suffixes`,
+    /// also the Turkish legal and trade tail ("Sanayi ve Ticaret Ltd. Şti.").
+    pub turkish: bool,
 }
 
-fn is_legal_suffix(word: &str) -> bool {
+fn is_legal_suffix(word: &str, turkish: bool) -> bool {
+    let listed =
+        |w: &str| LEGAL_SUFFIXES.contains(&w) || (turkish && TURKISH_SUFFIXES.contains(&w));
+    // "A.Ş." and "Ltd." with the dots removed, or a run like "San.ve" / "Tic.Ltd.Şti."
+    // where every dot-separated piece is itself a suffix word.
     let bare: String = word.chars().filter(|&c| c != '.' && c != ',').collect();
-    LEGAL_SUFFIXES.contains(&bare.as_str())
+    let mut pieces = word.split(['.', ',']).filter(|p| !p.is_empty()).peekable();
+    listed(&bare) || (pieces.peek().is_some() && pieces.all(listed))
 }
 
 /// Lowercase, collapse whitespace, and apply the options in `norm`.
 pub fn normalize_with(name: &str, norm: Norm) -> Vec<char> {
-    let lowered = name.to_lowercase();
+    let lowered = if norm.turkish {
+        turkish_lower(name)
+    } else {
+        name.to_lowercase()
+    };
     let mut words: Vec<&str> = lowered.split_whitespace().collect();
     if norm.strip_suffixes {
-        while words.len() > 1 && is_legal_suffix(words[words.len() - 1]) {
+        while words.len() > 1 && is_legal_suffix(words[words.len() - 1], norm.turkish) {
             words.pop();
         }
     }
@@ -81,6 +164,7 @@ pub fn normalize(name: &str, token_sort: bool) -> Vec<char> {
         Norm {
             token_sort,
             strip_suffixes: false,
+            turkish: false,
         },
     )
 }
@@ -821,6 +905,7 @@ mod tests {
                 Norm {
                     token_sort: false,
                     strip_suffixes: true,
+                    turkish: false,
                 },
             )
             .into_iter()
@@ -832,6 +917,62 @@ mod tests {
         assert_eq!(n("Kuzey Gıda Ltd. Şti."), "kuzey gıda");
         assert_eq!(n("Limited"), "limited"); // never strip the last word
         assert_eq!(n("Ltd Acme"), "ltd acme"); // only at the end
+    }
+
+    #[test]
+    fn turkish_mode() {
+        let tr = |s: &str, strip: bool| -> String {
+            normalize_with(
+                s,
+                Norm {
+                    token_sort: false,
+                    strip_suffixes: strip,
+                    turkish: true,
+                },
+            )
+            .into_iter()
+            .collect()
+        };
+        // Case and folding: every spelling of the same word agrees.
+        for s in ["TEKSTİL", "TEKSTIL", "Tekstil", "tekstıl", "teksti\u{307}l"] {
+            assert_eq!(tr(s, false), "tekstil", "{s}");
+        }
+        assert_eq!(tr("ÇAĞDAŞ GÜÇLÜ ÖZTÜRK", false), "cagdas guclu ozturk");
+        assert_eq!(tr("KÂĞIT", false), "kagit");
+        // The legal and trade tail goes, the sector word stays.
+        assert_eq!(
+            tr("ABC TEKSTİL SANAYİ VE TİCARET LİMİTED ŞİRKETİ", true),
+            "abc tekstil"
+        );
+        assert_eq!(
+            tr("Abc Tekstil San. ve Tic. Ltd. Şti.", true),
+            "abc tekstil"
+        );
+        assert_eq!(tr("ABC TEKSTIL SAN.VE TIC.LTD.STI.", true), "abc tekstil");
+        assert_eq!(tr("Kuzey Gıda İthalat İhracat A.Ş.", true), "kuzey gida");
+        assert_eq!(
+            tr("Marmara İç ve Dış Ticaret Anonim Şirketi", true),
+            "marmara"
+        );
+        assert_eq!(
+            tr("Ahmet Yılmaz ve Ortakları Kollektif Şirketi", true),
+            "ahmet yilmaz ve ortaklari"
+        );
+        assert_eq!(tr("Sanayi", true), "sanayi"); // never strip the last word
+                                                  // Without Turkish mode, Turkish trade words stay (an English "ABC IC" keeps its IC).
+        let plain = |s: &str| -> String {
+            normalize_with(
+                s,
+                Norm {
+                    token_sort: false,
+                    strip_suffixes: true,
+                    turkish: false,
+                },
+            )
+            .into_iter()
+            .collect()
+        };
+        assert_eq!(plain("ABC IC"), "abc ic");
     }
 
     #[test]

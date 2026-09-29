@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "fuzzy-dedupe"
-version = "0.4.0"
+version = "0.5.0"
 description = "Find near-duplicate names fast, with exactly the answers of a brute-force search. Rust core (PASS-JOIN + bit-parallel edit distance), Python API and CLI."
 readme = "README.md"
 license = { text = "Apache-2.0" }

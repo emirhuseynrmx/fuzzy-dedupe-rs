@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0 — 2026-09-29
+
+- **Turkish mode, `turkish=True`**, on every function, the `Index` and the CLI (`--turkish`): Turkish case rules (`I` → `ı`, `İ` → `i`), ASCII folding of Turkish letters so text typed with and without them agrees, and, with `strip_suffixes`, the Turkish legal and trade tail ("Sanayi ve Ticaret Limited Şirketi", "San. ve Tic. Ltd. Şti.", "A.Ş.", "İthalat İhracat", "İç ve Dış Ticaret", "Kollektif/Komandit Şirketi").
+- `strip_suffixes` recognizes runs written without spaces ("Tic.Ltd.Şti.") when every dot-separated piece is a legal word.
+- New benchmark on real Turkish legal names from the GLEIF register: `bench/turkish_quality.py`. Turkish mode with `strip_suffixes` raises F1 from 0.297 to 0.678 at threshold 0.05.
+- Saved indexes record the Turkish setting; files saved by 0.4 still load.
+
 ## 0.4.0 — 2026-09-29
 
 - **`Index`**: a persistent, incremental index. `Index.build`, `add`, `query`, `query_many`, `save`, `load`. Answers "which stored names match this one?" without rescanning, with the same exact results as a full comparison, including names added after the index was built.

@@ -5,7 +5,7 @@ authors:
   - family-names: "İnci"
     given-names: "Emir Hüseyin"
 license: Apache-2.0
-version: 0.4.0
+version: 0.5.0
 date-released: 2026-09-29
 repository-code: "https://github.com/emirhuseynrmx/fuzzy-dedupe-rs"
 references:
