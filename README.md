@@ -1,5 +1,7 @@
 # fuzzy-dedupe
 
+[![CI](https://github.com/emirhuseynrmx/fuzzy-dedupe-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/emirhuseynrmx/fuzzy-dedupe-rs/actions/workflows/ci.yml)
+
 Find near-duplicate names in a list: "Acme Ltd", "ACME  ltd" and "Acme Ltd." are the same customer.
 
 The same function exists twice in this repo: once in plain Python, the way most teams start, and once in Rust, called from Python through PyO3. Same inputs, same outputs, same rules. The Rust one is **113x faster on one core and 560x faster on twelve** for a 3,000-name list.
