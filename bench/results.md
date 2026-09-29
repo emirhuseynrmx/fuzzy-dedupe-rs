@@ -92,12 +92,22 @@ Machine: AMD64 Family 25 Model 33 Stepping 2, AuthenticAMD, 12 thread(s), Python
 | 0.05 | default | 2,495 | 0.395 | 0.238 | 0.297 |
 | 0.05 | strip_suffixes | 2,501 | 0.397 | 0.239 | 0.298 |
 | 0.05 | turkish | 4,207 | 0.523 | 0.530 | 0.526 |
-| 0.05 | turkish + strip_suffixes | 5,020 | 0.619 | 0.749 | 0.678 |
+| 0.05 | turkish + strip_suffixes | 5,372 | 0.642 | 0.832 | 0.725 |
+| 0.05 | turkish + strip_suffixes + numbers_must_match + word_threshold=0.34 | 3,393 | 0.971 | 0.794 | 0.874 |
 | 0.1 | default | 17,984 | 0.075 | 0.326 | 0.122 |
 | 0.1 | strip_suffixes | 17,996 | 0.076 | 0.329 | 0.123 |
 | 0.1 | turkish | 22,577 | 0.106 | 0.577 | 0.179 |
-| 0.1 | turkish + strip_suffixes | 20,975 | 0.164 | 0.831 | 0.274 |
+| 0.1 | turkish + strip_suffixes | 21,388 | 0.179 | 0.925 | 0.300 |
+| 0.1 | turkish + strip_suffixes + numbers_must_match + word_threshold=0.34 | 3,831 | 0.936 | 0.865 | 0.899 |
 | 0.15 | default | 58,927 | 0.034 | 0.490 | 0.064 |
 | 0.15 | strip_suffixes | 58,936 | 0.035 | 0.491 | 0.065 |
 | 0.15 | turkish | 74,091 | 0.033 | 0.587 | 0.062 |
-| 0.15 | turkish + strip_suffixes | 62,373 | 0.057 | 0.854 | 0.106 |
+| 0.15 | turkish + strip_suffixes | 62,986 | 0.063 | 0.950 | 0.117 |
+| 0.15 | turkish + strip_suffixes + numbers_must_match + word_threshold=0.34 | 4,050 | 0.903 | 0.882 | 0.893 |
+| 0.2 | default | 170,099 | 0.014 | 0.575 | 0.027 |
+| 0.2 | strip_suffixes | 170,094 | 0.014 | 0.575 | 0.027 |
+| 0.2 | turkish | 197,072 | 0.013 | 0.599 | 0.025 |
+| 0.2 | turkish + strip_suffixes | 161,092 | 0.025 | 0.964 | 0.048 |
+| 0.2 | turkish + strip_suffixes + numbers_must_match + word_threshold=0.34 | 4,174 | 0.883 | 0.889 | 0.886 |
+
+0.6 changes the `turkish + strip_suffixes` rows (0.678 -> 0.725 F1 at 0.05) by recognising tails with one typo and run-together tails such as `SAN.TİC.A.Ş.`. The last row per threshold adds the pair rules.

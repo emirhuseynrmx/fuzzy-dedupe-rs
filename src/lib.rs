@@ -7,7 +7,7 @@ pub mod index;
 
 #[cfg(feature = "python")]
 mod python {
-    use crate::core::{self, Norm};
+    use crate::core::{self, Norm, PairRules};
     use crate::index;
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
@@ -18,6 +18,25 @@ mod python {
         } else {
             Err(PyValueError::new_err("threshold must be between 0 and 1"))
         }
+    }
+
+    fn rules(
+        numbers_must_match: bool,
+        word_threshold: Option<f64>,
+        turkish: bool,
+    ) -> PyResult<PairRules> {
+        if let Some(wt) = word_threshold {
+            if !(0.0..=1.0).contains(&wt) {
+                return Err(PyValueError::new_err(
+                    "word_threshold must be between 0 and 1",
+                ));
+            }
+        }
+        Ok(PairRules {
+            numbers_must_match,
+            word_threshold,
+            turkish,
+        })
     }
 
     fn cleaned(names: &[String], norm: Norm) -> Vec<Vec<char>> {
@@ -55,8 +74,9 @@ mod python {
     }
 
     /// All pairs (i, j, score) with i < j whose normalized edit distance is <= threshold.
+    #[allow(clippy::too_many_arguments)]
     #[pyfunction]
-    #[pyo3(signature = (names, threshold = 0.2, *, token_sort = false, strip_suffixes = false, turkish = false, method = "auto"))]
+    #[pyo3(signature = (names, threshold = 0.2, *, token_sort = false, strip_suffixes = false, turkish = false, numbers_must_match = false, word_threshold = None, method = "auto"))]
     fn find_duplicates(
         py: Python<'_>,
         names: Vec<String>,
@@ -64,6 +84,8 @@ mod python {
         token_sort: bool,
         strip_suffixes: bool,
         turkish: bool,
+        numbers_must_match: bool,
+        word_threshold: Option<f64>,
         method: &str,
     ) -> PyResult<Vec<core::Pair>> {
         let names = cleaned(
@@ -74,13 +96,18 @@ mod python {
                 turkish,
             },
         );
+        let rules = rules(numbers_must_match, word_threshold, turkish)?;
         // No Python objects are touched from here on, so other Python threads keep running.
-        py.allow_threads(|| search(&names, threshold, method))
+        py.allow_threads(|| {
+            let pairs = search(&names, threshold, method)?;
+            Ok(core::filter_pairs(pairs, &names, &names, &rules))
+        })
     }
 
     /// Groups of names linked by any chain of duplicate pairs, each a sorted list of positions.
+    #[allow(clippy::too_many_arguments)]
     #[pyfunction]
-    #[pyo3(signature = (names, threshold = 0.2, *, token_sort = false, strip_suffixes = false, turkish = false, method = "auto"))]
+    #[pyo3(signature = (names, threshold = 0.2, *, token_sort = false, strip_suffixes = false, turkish = false, numbers_must_match = false, word_threshold = None, method = "auto"))]
     fn cluster(
         py: Python<'_>,
         names: Vec<String>,
@@ -88,6 +115,8 @@ mod python {
         token_sort: bool,
         strip_suffixes: bool,
         turkish: bool,
+        numbers_must_match: bool,
+        word_threshold: Option<f64>,
         method: &str,
     ) -> PyResult<Vec<Vec<usize>>> {
         let names = cleaned(
@@ -98,8 +127,10 @@ mod python {
                 turkish,
             },
         );
+        let rules = rules(numbers_must_match, word_threshold, turkish)?;
         py.allow_threads(|| {
             let pairs = search(&names, threshold, method)?;
+            let pairs = core::filter_pairs(pairs, &names, &names, &rules);
             Ok(core::clusters(names.len(), &pairs))
         })
     }
@@ -108,7 +139,7 @@ mod python {
     // The arguments mirror the Python signature one to one.
     #[allow(clippy::too_many_arguments)]
     #[pyfunction]
-    #[pyo3(signature = (left, right, threshold = 0.2, *, token_sort = false, strip_suffixes = false, turkish = false, method = "auto"))]
+    #[pyo3(signature = (left, right, threshold = 0.2, *, token_sort = false, strip_suffixes = false, turkish = false, numbers_must_match = false, word_threshold = None, method = "auto"))]
     fn link(
         py: Python<'_>,
         left: Vec<String>,
@@ -117,6 +148,8 @@ mod python {
         token_sort: bool,
         strip_suffixes: bool,
         turkish: bool,
+        numbers_must_match: bool,
+        word_threshold: Option<f64>,
         method: &str,
     ) -> PyResult<Vec<core::Pair>> {
         check_threshold(threshold)?;
@@ -131,18 +164,21 @@ mod python {
             left.iter().chain(right.iter()).map(Vec::len),
             threshold,
         )?;
+        let rules = rules(numbers_must_match, word_threshold, turkish)?;
         Ok(py.allow_threads(|| {
-            if brute {
+            let pairs = if brute {
                 core::link_brute(&left, &right, threshold)
             } else {
                 core::link_indexed(&left, &right, threshold)
-            }
+            };
+            core::filter_pairs(pairs, &left, &right, &rules)
         }))
     }
 
     /// Search statistics: pairs found and candidate pairs verified by the index.
+    #[allow(clippy::too_many_arguments)]
     #[pyfunction]
-    #[pyo3(signature = (names, threshold = 0.2, *, token_sort = false, strip_suffixes = false, turkish = false))]
+    #[pyo3(signature = (names, threshold = 0.2, *, token_sort = false, strip_suffixes = false, turkish = false, numbers_must_match = false, word_threshold = None))]
     fn stats(
         py: Python<'_>,
         names: Vec<String>,
@@ -150,6 +186,8 @@ mod python {
         token_sort: bool,
         strip_suffixes: bool,
         turkish: bool,
+        numbers_must_match: bool,
+        word_threshold: Option<f64>,
     ) -> PyResult<(usize, usize, usize)> {
         check_threshold(threshold)?;
         let names = cleaned(
@@ -160,8 +198,12 @@ mod python {
                 turkish,
             },
         );
+        let rules = rules(numbers_must_match, word_threshold, turkish)?;
         let n = names.len();
-        let (pairs, verified) = py.allow_threads(|| core::pairs_indexed_stats(&names, threshold));
+        let (pairs, verified) = py.allow_threads(|| {
+            let (pairs, verified) = core::pairs_indexed_stats(&names, threshold);
+            (core::filter_pairs(pairs, &names, &names, &rules), verified)
+        });
         Ok((pairs.len(), verified, n * n.saturating_sub(1) / 2))
     }
 
@@ -181,22 +223,26 @@ mod python {
     #[pymethods]
     impl PyIndex {
         #[new]
-        #[pyo3(signature = (threshold = 0.2, *, token_sort = false, strip_suffixes = false, turkish = false))]
+        #[allow(clippy::too_many_arguments)]
+        #[pyo3(signature = (threshold = 0.2, *, token_sort = false, strip_suffixes = false, turkish = false, numbers_must_match = false, word_threshold = None))]
         fn new(
             threshold: f64,
             token_sort: bool,
             strip_suffixes: bool,
             turkish: bool,
+            numbers_must_match: bool,
+            word_threshold: Option<f64>,
         ) -> PyResult<Self> {
             check_threshold(threshold)?;
             Ok(PyIndex {
-                inner: index::Index::new(
+                inner: index::Index::with_rules(
                     threshold,
                     Norm {
                         token_sort,
                         strip_suffixes,
                         turkish,
                     },
+                    rules(numbers_must_match, word_threshold, turkish)?,
                 ),
             })
         }
@@ -242,6 +288,16 @@ mod python {
         #[getter]
         fn turkish(&self) -> bool {
             self.inner.norm().turkish
+        }
+
+        #[getter]
+        fn numbers_must_match(&self) -> bool {
+            self.inner.rules().numbers_must_match
+        }
+
+        #[getter]
+        fn word_threshold(&self) -> Option<f64> {
+            self.inner.rules().word_threshold
         }
 
         fn __len__(&self) -> usize {

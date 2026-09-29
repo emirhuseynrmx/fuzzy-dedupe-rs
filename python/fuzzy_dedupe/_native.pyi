@@ -10,6 +10,8 @@ def find_duplicates(
     token_sort: bool = False,
     strip_suffixes: bool = False,
     turkish: bool = False,
+    numbers_must_match: bool = False,
+    word_threshold: float | None = None,
     method: Method = "auto",
 ) -> list[tuple[int, int, float]]: ...
 def cluster(
@@ -19,6 +21,8 @@ def cluster(
     token_sort: bool = False,
     strip_suffixes: bool = False,
     turkish: bool = False,
+    numbers_must_match: bool = False,
+    word_threshold: float | None = None,
     method: Method = "auto",
 ) -> list[list[int]]: ...
 def link(
@@ -29,17 +33,33 @@ def link(
     token_sort: bool = False,
     strip_suffixes: bool = False,
     turkish: bool = False,
+    numbers_must_match: bool = False,
+    word_threshold: float | None = None,
     method: Method = "auto",
 ) -> list[tuple[int, int, float]]: ...
 def stats(
-    names: Sequence[str], threshold: float = 0.2, *, token_sort: bool = False, strip_suffixes: bool = False, turkish: bool = False
+    names: Sequence[str],
+    threshold: float = 0.2,
+    *,
+    token_sort: bool = False,
+    strip_suffixes: bool = False,
+    turkish: bool = False,
+    numbers_must_match: bool = False,
+    word_threshold: float | None = None,
 ) -> tuple[int, int, int]:
     """(pairs found, candidate pairs verified by the index, all pairs)."""
 def levenshtein(a: str, b: str) -> int: ...
 
 class Index:
     def __init__(
-        self, threshold: float = 0.2, *, token_sort: bool = False, strip_suffixes: bool = False, turkish: bool = False
+        self,
+        threshold: float = 0.2,
+        *,
+        token_sort: bool = False,
+        strip_suffixes: bool = False,
+        turkish: bool = False,
+        numbers_must_match: bool = False,
+        word_threshold: float | None = None,
     ) -> None: ...
     def add(self, names: Sequence[str]) -> int: ...
     def query(self, name: str) -> list[tuple[int, float]]: ...
@@ -53,4 +73,8 @@ class Index:
     def strip_suffixes(self) -> bool: ...
     @property
     def turkish(self) -> bool: ...
+    @property
+    def numbers_must_match(self) -> bool: ...
+    @property
+    def word_threshold(self) -> float | None: ...
     def __len__(self) -> int: ...

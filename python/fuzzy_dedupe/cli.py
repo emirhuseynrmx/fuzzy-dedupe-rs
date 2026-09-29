@@ -28,6 +28,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--strip-suffixes", action="store_true", help="drop legal forms at the end ('Acme Ltd.' == 'Acme')")
     p.add_argument("--turkish", action="store_true",
                    help="Turkish case and letters (TEKSTİL == TEKSTIL); with --strip-suffixes also 'San. ve Tic. Ltd. Şti.'")
+    p.add_argument("--numbers-must-match", action="store_true",
+                   help="numbers (and Turkish ordinals with --turkish) must agree: 'Fund 2' != 'Fund 3'")
+    p.add_argument("--word-threshold", type=float, metavar="T",
+                   help="the words that differ must also be within T of each other (0.34 suits long legal names)")
+    p.add_argument("--precise", action="store_true", help="shorthand for --numbers-must-match --word-threshold 0.34")
     p.add_argument("--groups", action="store_true", help="output groups instead of pairs")
     p.add_argument("--link", metavar="OTHER_CSV", help="match against the rows of another CSV instead of deduplicating")
     p.add_argument("--link-column", help="column in OTHER_CSV (default: same as --column)")
@@ -50,6 +55,9 @@ def main(argv: list[str] | None = None) -> int:
             p.error(f"column {other_col!r} not found in {args.link}; columns are {list(other_rows[0])}")
         other = [(r.get(other_col) or "") for r in other_rows]
 
+    opts = {"token_sort": args.token_sort, "strip_suffixes": args.strip_suffixes, "turkish": args.turkish,
+            "numbers_must_match": args.numbers_must_match or args.precise,
+            "word_threshold": args.word_threshold if args.word_threshold is not None else (0.34 if args.precise else None)}
     start = time.perf_counter()
     if not args.output and hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")  # names are UTF-8; don't let a Windows console mangle them
@@ -57,20 +65,20 @@ def main(argv: list[str] | None = None) -> int:
     try:
         w = csv.writer(out)
         if args.link:
-            pairs = link(names, other, args.threshold, token_sort=args.token_sort, strip_suffixes=args.strip_suffixes, turkish=args.turkish)
+            pairs = link(names, other, args.threshold, **opts)
             w.writerow(["row", "other_row", "name", "other_name", "score"])
             for i, j, s in pairs:
                 w.writerow([i + 1, j + 1, names[i], other[j], f"{s:.4f}"])
             found = f"{len(pairs):,} matches against {len(other):,} rows"
         elif args.groups:
-            groups = cluster(names, args.threshold, token_sort=args.token_sort, strip_suffixes=args.strip_suffixes, turkish=args.turkish)
+            groups = cluster(names, args.threshold, **opts)
             w.writerow(["group", "row", args.column])
             for g, members in enumerate(groups, 1):
                 for i in members:
                     w.writerow([g, i + 1, names[i]])
             found = f"{len(groups):,} groups"
         else:
-            pairs = find_duplicates(names, args.threshold, token_sort=args.token_sort, strip_suffixes=args.strip_suffixes, turkish=args.turkish)
+            pairs = find_duplicates(names, args.threshold, **opts)
             w.writerow(["row_a", "row_b", "name_a", "name_b", "score"])
             for i, j, s in pairs:
                 w.writerow([i + 1, j + 1, names[i], names[j], f"{s:.4f}"])

@@ -6,7 +6,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from fuzzy_dedupe import cluster, cluster_python, find_duplicates, find_duplicates_python, levenshtein
+from fuzzy_dedupe import cluster, cluster_python, find_duplicates, find_duplicates_python, levenshtein, stats
 from fuzzy_dedupe.cli import main as cli
 from fuzzy_dedupe.reference import levenshtein as levenshtein_python
 
@@ -207,3 +207,84 @@ def test_turkish_index_saves_its_mode(tmp_path):
     idx.save(tmp_path / "tr.json")
     back = Index.load(tmp_path / "tr.json")
     assert back.turkish and back.query("KUZEY GIDA SANAYİ VE TİCARET LTD. ŞTİ.") == [(0, 0.0)]
+
+
+# ---- 0.6: typo-tolerant Turkish tails, pair rules ----
+
+TR_TAILS_TYPO = st.sampled_from(["", " San.Tic.A.Ş.", " SAN.TİC.A.Ş.", " Sanayi ve Ticaert", " Sanaiy", " İthalat İhraca",
+                                 " S.A.", " 2", " 3", " Birinci", " İkinci", " Onbeşinci"])
+tr_rule_names = st.lists(st.builds(lambda a, b, c: a + b + c, st.text(alphabet=TR_ALPHABET + "12", max_size=20),
+                                   TR_TAILS_TYPO, TR_TAILS), max_size=30)
+word_thresholds = st.sampled_from([None, 0.0, 0.25, 0.34, 0.5, 1.0])
+
+
+@settings(max_examples=300, deadline=None)
+@given(tr_rule_names, thresholds, st.booleans(), word_thresholds, st.booleans())
+def test_pair_rules_match_python(ns, t, numbers, wt, tr):
+    opts = {"strip_suffixes": True, "turkish": tr, "numbers_must_match": numbers, "word_threshold": wt}
+    expected = find_duplicates_python(ns, t, **opts)
+    for method in ("auto", "indexed", "brute"):
+        assert find_duplicates(ns, t, method=method, **opts) == expected
+    assert cluster(ns, t, **opts) == cluster_python(ns, t, **opts)
+    assert stats(ns, t, **opts)[0] == len(expected)
+
+
+@settings(max_examples=150, deadline=None)
+@given(tr_rule_names, tr_rule_names, st.lists(st.text(alphabet=TR_ALPHABET + "12", max_size=25), min_size=1, max_size=5),
+       thresholds, word_thresholds)
+def test_pair_rules_index_and_link_match_python(first, later, queries, t, wt):
+    from fuzzy_dedupe import Index, link, link_python
+
+    opts = {"strip_suffixes": True, "turkish": True, "numbers_must_match": True, "word_threshold": wt}
+    assert link(first, later, t, **opts) == link_python(first, later, t, **opts)
+    idx = Index.build(first, t, **opts)
+    idx.add(later)
+    stored = first + later
+    for q in queries:
+        assert idx.query(q) == [(j, s) for _, j, s in link_python([q], stored, t, **opts)]
+
+
+def test_turkish_tail_typos_are_stripped():
+    from fuzzy_dedupe.reference import normalize
+
+    def tr(s):
+        return normalize(s, strip_suffixes=True, turkish=True)
+
+    assert tr("AS OFIS YEM GIDA SANAYI VE TICAERT") == "as ofis yem gida"
+    assert tr("Morpa Ofset Lojistik Sanaiy") == "morpa ofset lojistik"
+    assert tr("KLN LOJİSTİK SAN.TİC.A.Ş.") == "kln lojistik"
+    assert tr("Durr Systems Makine İthalat ve İhraca") == "durr systems makine"
+    assert normalize("Acme S.A.", strip_suffixes=True) == "acme"
+    assert normalize("Acme Sanaiy", strip_suffixes=True) == "acme sanaiy"  # typo tolerance is Turkish mode only
+    same = ["KLN LOJİSTİK SAN.TİC.A.Ş.", "Kln Lojistik Sanayi ve Ticaret Anonim Şirketi"]
+    assert find_duplicates(same, 0.0, strip_suffixes=True, turkish=True) == [(0, 1, 0.0)]
+
+
+def test_pair_rules_reject_template_neighbours():
+    precise = {"strip_suffixes": True, "turkish": True, "numbers_must_match": True, "word_threshold": 0.34}
+    funds = ["Neo Portföy Birinci Serbest Fon", "Neo Portföy İkinci Serbest Fon",
+             "Pera Emeklilik 2 Fonu", "Pera Emeklilik 3 Fonu"]
+    assert find_duplicates(funds, 0.2, strip_suffixes=True, turkish=True) != []
+    assert find_duplicates(funds, 0.2, **precise) == []
+    assert find_duplicates(["Deniz Portföy Armut Serbest Fon", "Deniz Portföy Ru Serbest Fon"], 0.2, **precise) == []
+    assert find_duplicates(["Başaranlar İnşaat Malzemeleri", "BSAARANLAR INSAAT MALZEMELERI"], 0.2, **precise) == [(0, 1, 2 / 29)]
+
+
+def test_pair_rules_validation_and_persistence(tmp_path):
+    from fuzzy_dedupe import Index
+
+    with pytest.raises(ValueError):
+        find_duplicates(["a"], 0.1, word_threshold=1.5)
+    idx = Index.build(["Pera Emeklilik 2 Fonu"], 0.2, turkish=True, numbers_must_match=True, word_threshold=0.34)
+    idx.save(tmp_path / "rules.json")
+    back = Index.load(tmp_path / "rules.json")
+    assert back.numbers_must_match and back.word_threshold == 0.34
+    assert back.query("Pera Emeklilik 3 Fonu") == [] and back.query("PERA EMEKLİLİK 2 FONU") == [(0, 0.0)]
+
+
+def test_cli_precise(tmp_path, capsys):
+    src = tmp_path / "funds.csv"
+    src.write_text("name\nPera Emeklilik 2 Fonu\nPera Emeklilik 3 Fonu\nPERA EMEKLİLİK 2 FONU\n", encoding="utf-8")
+    assert cli([str(src), "--column", "name", "--turkish", "--precise"]) == 0
+    rows = list(csv.reader(capsys.readouterr().out.splitlines()))
+    assert [r[:2] for r in rows[1:]] == [["1", "3"]]

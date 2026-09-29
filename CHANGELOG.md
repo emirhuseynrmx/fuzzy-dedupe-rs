@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0 — 2026-09-29
+
+- **Pair rules**, opt-in on every function, the `Index` and the CLI: `numbers_must_match` (words with digits, and Turkish ordinals in Turkish mode, must agree) and `word_threshold` (the words two names do not share must themselves be similar). They reject different companies that share a long template, such as fund series. Both only remove pairs, so every strategy still returns the brute-force answer. CLI: `--numbers-must-match`, `--word-threshold T`, and `--precise` for both with 0.34.
+- Turkish mode recognises legal-tail words with one typo or swapped pair (`Ticaert`, `Sanaiy`, `İhraca`) and joins single letters in run-together tails (`SAN.TİC.A.Ş.`).
+- Turkish benchmark, threshold 0.05: F1 0.678 -> 0.725 from the tail changes, 0.874 with the pair rules (precision 0.971). At 0.1: 0.274 -> 0.899.
+- Saved indexes record the pair rules; files saved by 0.4 and 0.5 still load.
+
 ## 0.5.0 — 2026-09-29
 
 - **Turkish mode, `turkish=True`**, on every function, the `Index` and the CLI (`--turkish`): Turkish case rules (`I` → `ı`, `İ` → `i`), ASCII folding of Turkish letters so text typed with and without them agrees, and, with `strip_suffixes`, the Turkish legal and trade tail ("Sanayi ve Ticaret Limited Şirketi", "San. ve Tic. Ltd. Şti.", "A.Ş.", "İthalat İhracat", "İç ve Dış Ticaret", "Kollektif/Komandit Şirketi").

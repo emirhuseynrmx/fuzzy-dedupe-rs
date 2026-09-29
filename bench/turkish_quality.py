@@ -106,8 +106,10 @@ def main() -> None:
     print("| Threshold | Settings | Pairs found | Precision | Recall | F1 |")
     print("|---:|---|---:|---:|---:|---:|")
     settings = [("default", {}), ("strip_suffixes", {"strip_suffixes": True}), ("turkish", {"turkish": True}),
-                ("turkish + strip_suffixes", {"turkish": True, "strip_suffixes": True})]
-    for t in (0.05, 0.1, 0.15):
+                ("turkish + strip_suffixes", {"turkish": True, "strip_suffixes": True}),
+                ("turkish + strip_suffixes + numbers_must_match + word_threshold=0.34",
+                 {"turkish": True, "strip_suffixes": True, "numbers_must_match": True, "word_threshold": 0.34})]
+    for t in (0.05, 0.1, 0.15, 0.2):
         for label, kw in settings:
             found = {(i, j) for i, j, _ in find_duplicates(rows, t, **kw)}
             tp = len(found & truth)

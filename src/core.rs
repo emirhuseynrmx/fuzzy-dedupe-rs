@@ -127,14 +127,68 @@ pub struct Norm {
     pub turkish: bool,
 }
 
+/// Optimal string alignment distance: Levenshtein plus adjacent transpositions.
+/// Used only on short words.
+pub fn osa_distance(a: &[char], b: &[char]) -> usize {
+    let (n, m) = (a.len(), b.len());
+    let mut d = vec![vec![0usize; m + 1]; n + 1];
+    d[0] = (0..=m).collect();
+    for (i, row) in d.iter_mut().enumerate() {
+        row[0] = i;
+    }
+    for i in 1..=n {
+        for j in 1..=m {
+            let cost = usize::from(a[i - 1] != b[j - 1]);
+            let mut v = (d[i - 1][j] + 1)
+                .min(d[i][j - 1] + 1)
+                .min(d[i - 1][j - 1] + cost);
+            if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                v = v.min(d[i - 2][j - 2] + 1);
+            }
+            d[i][j] = v;
+        }
+    }
+    d[n][m]
+}
+
+/// A word counts as a legal-form word if it is listed, or (Turkish mode) if it is a
+/// long Turkish tail word with one typo or swapped pair: "ticaert", "sanaiy".
+fn listed_suffix(w: &str, turkish: bool) -> bool {
+    if LEGAL_SUFFIXES.contains(&w) || (turkish && TURKISH_SUFFIXES.contains(&w)) {
+        return true;
+    }
+    if !turkish || w.chars().count() < 6 {
+        return false;
+    }
+    let wc: Vec<char> = w.chars().collect();
+    TURKISH_SUFFIXES
+        .iter()
+        .any(|s| s.len() >= 6 && osa_distance(&wc, &s.chars().collect::<Vec<_>>()) <= 1)
+}
+
+/// The dot- or comma-separated pieces of a word, with runs of single letters joined:
+/// "san.tic.a.s." -> ["san", "tic", "as"], "s.a." -> ["sa"].
+fn suffix_pieces(word: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut prev_single = false;
+    for p in word.split(['.', ',']).filter(|p| !p.is_empty()) {
+        let single = p.chars().count() == 1;
+        match out.last_mut() {
+            Some(last) if single && prev_single => last.push_str(p),
+            _ => out.push(p.to_string()),
+        }
+        prev_single = single;
+    }
+    out
+}
+
 fn is_legal_suffix(word: &str, turkish: bool) -> bool {
-    let listed =
-        |w: &str| LEGAL_SUFFIXES.contains(&w) || (turkish && TURKISH_SUFFIXES.contains(&w));
     // "A.Ş." and "Ltd." with the dots removed, or a run like "San.ve" / "Tic.Ltd.Şti."
     // where every dot-separated piece is itself a suffix word.
     let bare: String = word.chars().filter(|&c| c != '.' && c != ',').collect();
-    let mut pieces = word.split(['.', ',']).filter(|p| !p.is_empty()).peekable();
-    listed(&bare) || (pieces.peek().is_some() && pieces.all(listed))
+    let pieces = suffix_pieces(word);
+    listed_suffix(&bare, turkish)
+        || (!pieces.is_empty() && pieces.iter().all(|p| listed_suffix(p, turkish)))
 }
 
 /// Lowercase, collapse whitespace, and apply the options in `norm`.
@@ -167,6 +221,140 @@ pub fn normalize(name: &str, token_sort: bool) -> Vec<char> {
             turkish: false,
         },
     )
+}
+
+/// Extra conditions a pair must meet on top of the edit-distance threshold. They
+/// only ever reject pairs, so every search strategy still returns the same result.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PairRules {
+    /// Words containing digits, and in Turkish mode ordinal words ("birinci",
+    /// "onbesinci"), must be the same in both names: fund 2 is not fund 3.
+    pub numbers_must_match: bool,
+    /// The words that differ between the two names must themselves be similar:
+    /// edit distance of the differing words, joined, divided by the longer of the two
+    /// joins, at most this. Rejects "Garanti Portföy ARMUT Fon" vs "Garanti Portföy RU
+    /// Fon", where one whole word changes inside a long shared template.
+    pub word_threshold: Option<f64>,
+    /// Use Turkish ordinals for `numbers_must_match`.
+    pub turkish: bool,
+}
+
+impl PairRules {
+    pub fn active(&self) -> bool {
+        self.numbers_must_match || self.word_threshold.is_some()
+    }
+}
+
+/// The words of a normalized name, sorted, and its number-like words, sorted.
+#[derive(Clone, Debug, Default)]
+pub struct Tokens {
+    words: Vec<String>,
+    numbers: Vec<String>,
+}
+
+const ONES: &[&str] = &[
+    "birinci",
+    "ikinci",
+    "ucuncu",
+    "dorduncu",
+    "besinci",
+    "altinci",
+    "yedinci",
+    "sekizinci",
+    "dokuzuncu",
+];
+const TENS: &[&str] = &[
+    "onuncu",
+    "yirminci",
+    "otuzuncu",
+    "kirkinci",
+    "ellinci",
+    "altmisinci",
+    "yetmisinci",
+    "sekseninci",
+    "doksaninci",
+];
+const TEN_PREFIXES: &[&str] = &[
+    "on", "yirmi", "otuz", "kirk", "elli", "altmis", "yetmis", "seksen", "doksan",
+];
+
+/// Turkish ordinal words up to one hundred, ASCII-folded ("birinci", "onbesinci").
+pub fn is_turkish_ordinal(w: &str) -> bool {
+    if w == "yuzuncu" || ONES.contains(&w) || TENS.contains(&w) {
+        return true;
+    }
+    TEN_PREFIXES
+        .iter()
+        .any(|p| w.strip_prefix(p).is_some_and(|rest| ONES.contains(&rest)))
+}
+
+pub fn tokens_of(name: &[char], rules: &PairRules) -> Tokens {
+    let text: String = name.iter().collect();
+    let mut words: Vec<String> = text
+        .split(' ')
+        .filter(|w| !w.is_empty())
+        .map(str::to_string)
+        .collect();
+    words.sort_unstable();
+    let numbers: Vec<String> = words
+        .iter()
+        .filter(|w| {
+            w.chars().any(|c| c.is_ascii_digit()) || (rules.turkish && is_turkish_ordinal(w))
+        })
+        .cloned()
+        .collect();
+    Tokens { words, numbers }
+}
+
+/// Words of `a` not matched one-for-one in `b`, in sorted order, joined by spaces.
+fn leftover(a: &[String], b: &[String]) -> Vec<char> {
+    let (mut i, mut j) = (0, 0);
+    let mut out: Vec<&str> = Vec::new();
+    while i < a.len() {
+        if j < b.len() && a[i] == b[j] {
+            i += 1;
+            j += 1;
+        } else if j < b.len() && b[j] < a[i] {
+            j += 1;
+        } else {
+            out.push(&a[i]);
+            i += 1;
+        }
+    }
+    out.join(" ").chars().collect()
+}
+
+/// Whether a pair that passed the edit-distance threshold also meets `rules`.
+pub fn pair_accepted(a: &Tokens, b: &Tokens, rules: &PairRules) -> bool {
+    if rules.numbers_must_match && a.numbers != b.numbers {
+        return false;
+    }
+    if let Some(wt) = rules.word_threshold {
+        let (da, db) = (leftover(&a.words, &b.words), leftover(&b.words, &a.words));
+        let longest = da.len().max(db.len());
+        if longest > 0 && levenshtein(&da, &db) as f64 / longest as f64 > wt {
+            return false;
+        }
+    }
+    true
+}
+
+/// Keep only the pairs `(i, j, _)` of `left[i]`, `right[j]` that meet `rules`.
+pub fn filter_pairs(
+    pairs: Vec<Pair>,
+    left: &[Vec<char>],
+    right: &[Vec<char>],
+    rules: &PairRules,
+) -> Vec<Pair> {
+    if !rules.active() {
+        return pairs;
+    }
+    let tl: Vec<Tokens> = left.par_iter().map(|n| tokens_of(n, rules)).collect();
+    let tr: Vec<Tokens> = right.par_iter().map(|n| tokens_of(n, rules)).collect();
+    pairs
+        .into_iter()
+        .filter(|&(i, j, _)| pair_accepted(&tl[i], &tr[j], rules))
+        .collect()
 }
 
 /// A character-frequency sketch: counts of characters hashed into 32 buckets.
@@ -973,6 +1161,73 @@ mod tests {
             .collect()
         };
         assert_eq!(plain("ABC IC"), "abc ic");
+    }
+
+    #[test]
+    fn turkish_tail_typos_and_joined_letters() {
+        let tr = |s: &str| -> String {
+            normalize_with(
+                s,
+                Norm {
+                    token_sort: false,
+                    strip_suffixes: true,
+                    turkish: true,
+                },
+            )
+            .into_iter()
+            .collect()
+        };
+        assert_eq!(tr("AS OFIS YEM GIDA SANAYI VE TICAERT"), "as ofis yem gida");
+        assert_eq!(tr("Morpa Ofset Lojistik Sanaiy"), "morpa ofset lojistik");
+        assert_eq!(tr("KLN LOJISTIK SAN.TIC.A.S."), "kln lojistik");
+        assert_eq!(
+            tr("Durr Systems Makine İthalat ve İhraca"),
+            "durr systems makine"
+        );
+        let intl = |s: &str| -> String {
+            normalize_with(
+                s,
+                Norm {
+                    token_sort: false,
+                    strip_suffixes: true,
+                    turkish: false,
+                },
+            )
+            .into_iter()
+            .collect()
+        };
+        assert_eq!(intl("Acme S.A."), "acme");
+        assert_eq!(intl("Acme B.V."), "acme");
+        assert_eq!(intl("Acme Sanaiy"), "acme sanaiy"); // typo tolerance is Turkish mode only
+    }
+
+    #[test]
+    fn pair_rules() {
+        let rules = PairRules {
+            numbers_must_match: true,
+            word_threshold: Some(0.34),
+            turkish: true,
+        };
+        let t = |s: &str| tokens_of(&s.chars().collect::<Vec<_>>(), &rules);
+        let ok = |a: &str, b: &str| pair_accepted(&t(a), &t(b), &rules);
+        assert!(!ok("pera 3 emeklilik fonu", "pera 2 emeklilik fonu"));
+        assert!(!ok("neo portfoy birinci fon", "neo portfoy ikinci fon"));
+        assert!(!ok("neo portfoy onbesinci fon", "neo portfoy onikinci fon"));
+        assert!(!ok(
+            "deniz portfoy armut serbest fon",
+            "deniz portfoy ru serbest fon"
+        ));
+        assert!(ok(
+            "basaranlar insaat malzemeleri",
+            "bsaaranlar insaat malzemeleri"
+        ));
+        assert!(ok("pera 3 emeklilik", "pera 3 emeklilik"));
+        assert!(ok("acme", "acme"));
+        assert!(
+            is_turkish_ordinal("doksandokuzuncu")
+                && is_turkish_ordinal("yuzuncu")
+                && !is_turkish_ordinal("birinc")
+        );
     }
 
     #[test]

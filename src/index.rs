@@ -13,13 +13,17 @@
 //! appears in `q` shifted by at most `k`. So a query returns exactly what
 //! comparing it with every stored name would.
 
-use crate::core::{self, key, max_edits, segment, sketch, Norm, Prepared, Rule, Sketch};
+use crate::core::{
+    self, key, max_edits, segment, sketch, Norm, PairRules, Prepared, Rule, Sketch, Tokens,
+};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 
 pub struct Index {
     threshold: f64,
     norm: Norm,
+    rules: PairRules,
+    tokens: Vec<Tokens>,
     raw: Vec<String>,
     names: Vec<Vec<char>>,
     sketches: Vec<Sketch>,
@@ -30,9 +34,15 @@ pub struct Index {
 
 impl Index {
     pub fn new(threshold: f64, norm: Norm) -> Self {
+        Self::with_rules(threshold, norm, PairRules::default())
+    }
+
+    pub fn with_rules(threshold: f64, norm: Norm, rules: PairRules) -> Self {
         Index {
             threshold,
             norm,
+            rules,
+            tokens: Vec::new(),
             raw: Vec::new(),
             names: Vec::new(),
             sketches: Vec::new(),
@@ -48,6 +58,10 @@ impl Index {
 
     pub fn norm(&self) -> Norm {
         self.norm
+    }
+
+    pub fn rules(&self) -> PairRules {
+        self.rules
     }
 
     pub fn len(&self) -> usize {
@@ -109,6 +123,9 @@ impl Index {
                     }
                 }
             }
+            if self.rules.active() {
+                self.tokens.push(core::tokens_of(&name, &self.rules));
+            }
             self.sketches.push(sketch(&name));
             self.names.push(name);
             self.raw.push(raw.clone());
@@ -126,7 +143,8 @@ impl Index {
             core::score(&pq, &q, &sq, &self.names[r], &self.sketches[r], &rule).map(|s| (r, s))
         };
         if self.scans() {
-            return (0..self.names.len()).filter_map(check).collect();
+            let hits = (0..self.names.len()).filter_map(check).collect();
+            return self.apply_rules(&q, hits);
         }
         let lq = q.len();
         let max_len = self.by_len.len().saturating_sub(1);
@@ -181,7 +199,17 @@ impl Index {
             .filter_map(|r| check(r as usize))
             .collect();
         out.sort_unstable_by_key(|&(r, _)| r);
-        out
+        self.apply_rules(&q, out)
+    }
+
+    fn apply_rules(&self, q: &[char], hits: Vec<(usize, f64)>) -> Vec<(usize, f64)> {
+        if !self.rules.active() {
+            return hits;
+        }
+        let tq = core::tokens_of(q, &self.rules);
+        hits.into_iter()
+            .filter(|&(r, _)| core::pair_accepted(&tq, &self.tokens[r], &self.rules))
+            .collect()
     }
 
     /// `query` for many names at once, in parallel.
@@ -196,7 +224,10 @@ mod tests {
     use proptest::prelude::*;
 
     fn name() -> impl Strategy<Value = String> {
-        prop::string::string_regex("[abcçdeşğİIıi ]{0,40}( (Ltd|San|Tic|ve|Şti|A.Ş.))?").unwrap()
+        prop::string::string_regex(
+            "[abcçdeşğİIıi 12]{0,40}( (Ltd|San|Tic|ve|Şti|A.Ş.|birinci|ikinci))?",
+        )
+        .unwrap()
     }
 
     fn brute(stored: &[String], q: &str, t: f64, norm: Norm) -> Vec<(usize, f64)> {
@@ -231,6 +262,31 @@ mod tests {
             let stored: Vec<String> = first.iter().chain(later.iter()).cloned().collect();
             for q in &queries {
                 prop_assert_eq!(idx.query(q), brute(&stored, q, t, norm));
+            }
+        }
+
+        #[test]
+        fn rules_only_remove_pairs(
+            stored in prop::collection::vec(name(), 0..40),
+            queries in prop::collection::vec(name(), 1..8),
+            t in 0.0f64..0.6,
+            wt in prop::option::of(0.0f64..1.0),
+            numbers in any::<bool>(),
+        ) {
+            let norm = Norm { token_sort: false, strip_suffixes: true, turkish: true };
+            let rules = PairRules { numbers_must_match: numbers, word_threshold: wt, turkish: true };
+            let mut idx = Index::with_rules(t, norm, rules);
+            idx.add(&stored);
+            for q in &queries {
+                let tq = core::tokens_of(&core::normalize_with(q, norm), &rules);
+                let expected: Vec<(usize, f64)> = brute(&stored, q, t, norm)
+                    .into_iter()
+                    .filter(|&(i, _)| {
+                        let ts = core::tokens_of(&core::normalize_with(&stored[i], norm), &rules);
+                        core::pair_accepted(&tq, &ts, &rules)
+                    })
+                    .collect();
+                prop_assert_eq!(idx.query(q), expected);
             }
         }
     }

@@ -164,9 +164,28 @@ Turkish data breaks generic normalization three ways: `"İ".lower()` is not `"i"
 | default | 0.395 | 0.238 | 0.297 |
 | `strip_suffixes` | 0.397 | 0.239 | 0.298 |
 | `turkish` | 0.523 | 0.530 | 0.526 |
-| **`turkish` + `strip_suffixes`** | **0.619** | **0.749** | **0.678** |
+| `turkish` + `strip_suffixes` | 0.642 | 0.832 | 0.725 |
+| **`turkish` + `strip_suffixes` + pair rules** | **0.971** | **0.794** | **0.874** |
 
-Generic legal-form stripping does almost nothing on Turkish names; Turkish mode more than doubles F1. Precision stays modest because many Turkish legal names share long activity lists in the middle ("MADENCİLİK MAKİNA İNŞAAT HAYVANCILIK"), which edit distance counts as similarity; higher thresholds make that worse (full table in [`bench/results.md`](bench/results.md)).
+Generic legal-form stripping does almost nothing on Turkish names; Turkish mode more than doubles F1. Turkish mode also recognises tails typed with a typo (`TİCAERT`, `SANAİY`, `İHRACA`) and run together (`SAN.TİC.A.Ş.`).
+
+### Pair rules: `numbers_must_match` and `word_threshold`
+
+Edit distance alone has one blind spot on legal names: two different companies that share a long template. `NEO PORTFÖY BİRİNCİ SERBEST FON` and `NEO PORTFÖY İKİNCİ SERBEST FON` are one word apart in forty characters; so are `DENİZ PORTFÖY ARMUT SERBEST FON` and `DENİZ PORTFÖY RU SERBEST FON`. Two optional rules close it, on top of the threshold:
+
+- `numbers_must_match=True`: words containing digits, and in Turkish mode ordinal words (`birinci` … `doksandokuzuncu`, `yüzüncü`), must be the same in both names. Fund 2 is not fund 3.
+- `word_threshold=T`: the words the two names do not share, joined, must themselves be within `T`. A typo inside a word passes; a whole word swapped for another does not.
+
+Both only ever remove pairs, so every search strategy still returns exactly the brute-force answer (checked by property tests in Rust and Python). On the same Turkish benchmark, with `word_threshold=0.34`:
+
+| Threshold | F1 without rules | F1 with rules | Precision with rules | Recall with rules |
+|---:|---:|---:|---:|---:|
+| 0.05 | 0.725 | **0.874** | 0.971 | 0.794 |
+| 0.10 | 0.300 | **0.899** | 0.936 | 0.865 |
+| 0.15 | 0.117 | **0.893** | 0.903 | 0.882 |
+| 0.20 | 0.048 | **0.886** | 0.883 | 0.889 |
+
+Without the rules, raising the threshold buys recall at a ruinous cost in precision. With them, precision stays near 0.9 up to 0.2, so the threshold can be set for recall. The CLI flag `--precise` turns on both rules with `word_threshold=0.34` (full table in [`bench/results.md`](bench/results.md)).
 
 ### Against plain Python
 
@@ -212,15 +231,15 @@ Work runs on all cores with rayon, with Python's GIL released.
 
 | Function | Returns |
 |---|---|
-| `find_duplicates(names, threshold=0.2, *, token_sort=False, strip_suffixes=False, turkish=False, method="auto")` | `list[(i, j, score)]`, `i < j`, sorted |
-| `cluster(names, threshold=0.2, *, token_sort=False, strip_suffixes=False, turkish=False, method="auto")` | `list[list[int]]`, groups of two or more |
-| `link(left, right, threshold=0.2, *, token_sort=False, strip_suffixes=False, turkish=False, method="auto")` | `list[(i, j, score)]`, `left[i]` matches `right[j]` |
-| `stats(names, threshold=0.2, *, token_sort=False, strip_suffixes=False, turkish=False)` | `(pairs found, candidate pairs verified, all pairs)`: how much work the filters skipped |
+| `find_duplicates(names, threshold=0.2, *, token_sort=False, strip_suffixes=False, turkish=False, numbers_must_match=False, word_threshold=None, method="auto")` | `list[(i, j, score)]`, `i < j`, sorted |
+| `cluster(names, threshold=0.2, *, token_sort=False, strip_suffixes=False, turkish=False, numbers_must_match=False, word_threshold=None, method="auto")` | `list[list[int]]`, groups of two or more |
+| `link(left, right, threshold=0.2, *, token_sort=False, strip_suffixes=False, turkish=False, numbers_must_match=False, word_threshold=None, method="auto")` | `list[(i, j, score)]`, `left[i]` matches `right[j]` |
+| `stats(names, threshold=0.2, *, token_sort=False, strip_suffixes=False, turkish=False, numbers_must_match=False, word_threshold=None)` | `(pairs found, candidate pairs verified, all pairs)`: how much work the filters skipped |
 | `levenshtein(a, b)` | edit distance in characters |
 
 | `Index` | |
 |---|---|
-| `Index(threshold=0.2, *, token_sort=False, strip_suffixes=False, turkish=False)` | empty index |
+| `Index(threshold=0.2, *, token_sort=False, strip_suffixes=False, turkish=False, numbers_must_match=False, word_threshold=None)` | empty index |
 | `Index.build(names, threshold, ...)` | index holding `names`, ids `0..len-1` |
 | `idx.add(names)` | id of the first new name; ids are consecutive |
 | `idx.query(name)` | `list[(id, score)]`, sorted by id |
@@ -231,7 +250,9 @@ Work runs on all cores with rayon, with Python's GIL released.
 - `threshold` is in `[0, 1]`: the edit distance divided by the longer name's length.
 - `token_sort=True` sorts words before comparing, so `"Ltd Acme"` equals `"Acme Ltd"`.
 - `strip_suffixes=True` drops legal forms at the end: Ltd, Limited, LLC, LLP, PLC, Inc, Corp, Co, GmbH, AG, SA, SRL, BV, NV, Pty, A.Ş., Ltd. Şti. and similar, as long as one word remains. Runs written without spaces (`Tic.Ltd.Şti.`) count if every dot-separated piece is a legal word.
-- `turkish=True` applies Turkish case rules (`I` → `ı`, `İ` → `i`) and folds Turkish letters to ASCII (`ç ğ ı ö ş ü â î û`), so `TEKSTİL`, `TEKSTIL`, `Tekstil` and `tekstıl` agree. With `strip_suffixes` it also drops the Turkish legal and trade tail: Sanayi ve Ticaret, San. ve Tic., Anonim/Limited Şirketi, A.Ş., Ltd. Şti., İthalat İhracat, İç ve Dış Ticaret, Kollektif/Komandit Şirketi. Sector words such as Tekstil or Gıda are kept: they tell companies apart.
+- `turkish=True` applies Turkish case rules (`I` → `ı`, `İ` → `i`) and folds Turkish letters to ASCII (`ç ğ ı ö ş ü â î û`), so `TEKSTİL`, `TEKSTIL`, `Tekstil` and `tekstıl` agree. With `strip_suffixes` it also drops the Turkish legal and trade tail: Sanayi ve Ticaret, San. ve Tic., Anonim/Limited Şirketi, A.Ş., Ltd. Şti., İthalat İhracat, İç ve Dış Ticaret, Kollektif/Komandit Şirketi. Sector words such as Tekstil or Gıda are kept: they tell companies apart. Long tail words with one typo or swapped pair (`Ticaert`, `Sanaiy`) count too.
+- `numbers_must_match=True` rejects a pair whose numbers differ (digits, and Turkish ordinals in Turkish mode).
+- `word_threshold=T` rejects a pair whose differing words, joined, are further apart than `T`. `0.34` suits long legal names.
 - `method`: `"auto"` picks the index or all pairs from the data; `"indexed"` and `"brute"` force one. All three return the same result.
 - `find_duplicates_python`, `cluster_python`, `link_python`: the pure-Python reference, same signatures without `method`.
 - Fully typed (`py.typed`).
@@ -240,6 +261,7 @@ Work runs on all cores with rayon, with Python's GIL released.
 
 ```text
 fuzzy-dedupe INPUT.csv --column NAME [--threshold 0.2] [--token-sort] [--strip-suffixes] [--turkish]
+                      [--numbers-must-match] [--word-threshold T] [--precise]
                        [--groups | --link OTHER.csv [--link-column NAME]] [-o OUT.csv]
 ```
 
@@ -280,6 +302,7 @@ Step 2: looking for duplicates in the 13 rows that passed
 - `cluster` uses transitive closure, so a chain of close names can join two distant ones. Review large groups.
 - The legal-form lists for `strip_suffixes` are fixed (common English and European forms, plus the Turkish tail in Turkish mode); they aren't configurable yet, and only the end of a name is stripped.
 - Turkish mode folds `ı`/`i`, `ş`/`s` and the rest, so two different words that differ only in those letters become equal. For company names that is the intended trade-off.
+- `word_threshold` also rejects true duplicates where a whole word was dropped or replaced (`ABC Gıda` vs `ABC Gıda Pazarlama`). On the Turkish benchmark the pair rules cost 4 to 8 points of recall (0.832 -> 0.794 at threshold 0.05, 0.964 -> 0.889 at 0.2); leave it off when recall matters more than precision.
 - Python's `str.split()` treats `\x1c`–`\x1f` as whitespace and Rust doesn't; strip those control characters first if your data has them.
 - The index keeps every name and its segments in memory; `save` stores names, not the index, so `load` rebuilds it (800,000 names in about a second on the benchmark machine).
 
