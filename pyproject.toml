@@ -16,6 +16,7 @@ classifiers = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+examples = ["proofframe>=0.7", "pyarrow>=14", "pandas>=2"]
 
 [tool.maturin]
 python-source = "python"

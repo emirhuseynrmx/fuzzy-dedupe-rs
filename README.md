@@ -50,6 +50,30 @@ Each result is `(i, j, score)`: the positions of the two names and their edit di
 
 The pure-Python version is `fuzzy_dedupe.find_duplicates_python`, with the same signature.
 
+## A real cleanup: check first, then dedupe
+
+[`examples/clean_customers.py`](examples/clean_customers.py) runs the whole job on a messy customer file. It checks the rows first with [ProofFrame](https://github.com/emirhuseynrmx/proofframe), my data validation library, so a missing name or a repeated id is reported instead of quietly skewing the result, then runs `find_duplicates` on the rows that passed.
+
+```bash
+pip install proofframe pyarrow pandas
+python examples/clean_customers.py examples/customers.csv
+```
+
+```text
+Step 1: checked 15 rows, 2 problems
+  line 8 (customer #7): name - Null value is not allowed
+  line 10 (customer #8): customer_id - Duplicate value detected
+
+Step 2: looking for duplicates in the 13 rows that passed
+  #1 'Acme Ltd'               ~ #2 'ACME  ltd'              distance 0.00
+  #1 'Acme Ltd'               ~ #3 'Acme Ltd.'              distance 0.11
+  #2 'ACME  ltd'              ~ #3 'Acme Ltd.'              distance 0.11
+  #9 'Şişecam A.Ş.'           ~ #10 'şişecam a.ş'            distance 0.08
+  #12 'Stark Industries'       ~ #13 'Stark Industires'       distance 0.12
+```
+
+ProofFrame is optional: `fuzzy_dedupe` itself has no dependencies.
+
 ## Build
 
 You need Python 3.9+ and a Rust toolchain.
@@ -75,6 +99,7 @@ src/lib.rs                       Rust version (PyO3 + rayon)
 python/fuzzy_dedupe/reference.py Pure-Python version
 tests/test_same_answers.py       Both must agree
 bench/bench.py                   Timing script behind the table above
+examples/clean_customers.py      Check a CSV with ProofFrame, then dedupe it
 ```
 
 ## License

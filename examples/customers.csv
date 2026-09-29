@@ -1,0 +1,16 @@
+customer_id,name,country
+1,Acme Ltd,TR
+2,ACME  ltd,TR
+3,Acme Ltd.,TR
+4,Globex Corporation,US
+5,Globex Corp,US
+6,Initech,US
+7,,DE
+8,Umbrella Corp,UK
+8,Umbrella Corporation,UK
+9,Şişecam A.Ş.,TR
+10,şişecam a.ş,TR
+11,Hooli,US
+12,Stark Industries,US
+13,Stark Industires,US
+14,Wayne Enterprises,US
