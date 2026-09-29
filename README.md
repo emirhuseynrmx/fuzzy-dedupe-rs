@@ -1,4 +1,9 @@
-# fuzzy-dedupe
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+    <img src="assets/logo-light.svg" alt="fuzzy-dedupe" width="560">
+  </picture>
+</h1>
 
 [![CI](https://github.com/emirhuseynrmx/fuzzy-dedupe-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/emirhuseynrmx/fuzzy-dedupe-rs/actions/workflows/ci.yml)
 
