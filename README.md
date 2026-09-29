@@ -23,6 +23,12 @@ Where the speed comes from:
 - **Native code:** the inner loop compares characters in memory instead of Python objects. That alone is the 113x.
 - **All cores:** rows are split across threads with rayon. The Python version can't do this with threads because of the GIL; the Rust version releases the GIL while it works.
 
+## Why not RapidFuzz?
+
+If an existing library does what you need, use it. [RapidFuzz](https://github.com/rapidfuzz/RapidFuzz) is mature, well tested and fast, and for plain fuzzy matching it is the right choice.
+
+This repo is not meant to replace it. It shows the method: when your own rule isn't in any library (your normalization, your scoring, your business logic around it), this is how I move that rule from Python to Rust without changing how your code calls it, and how I show the answers didn't change.
+
 ## Use it
 
 ```python
